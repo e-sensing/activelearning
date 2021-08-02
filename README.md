@@ -1,1 +1,3 @@
-# active_learning
+# Active Learning
+
+Research topic on active learning using `sits` package.
