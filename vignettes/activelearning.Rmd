@@ -120,7 +120,7 @@ names(ref_labels) <- as.character(1:length(ref_labels))
 # Get a raster with the ground truth.
 ref_rast <- rast(label_cube[["file_info"]][[1]][["path"]])
 
-plot(ref_rast)
+plot(label_cube, main = "Ground truth")
 
 ```
 
