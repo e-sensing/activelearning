@@ -1,10 +1,13 @@
 ---
 title: "Active Learning"
 output: rmarkdown::html_vignette
+bibliography: references.bib  
 vignette: >
   %\VignetteIndexEntry{activelearning}
-  %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r, include = FALSE}
@@ -22,11 +25,10 @@ library(magrittr)
 library(terra)
 
 n_samples <- 20
-n_iterations <- 30
-n_multicores <- 2
+n_iterations <- 20
+n_multicores <- parallel::detectCores() / 2
 
 ```
-
 
 
 ```{r util, include=FALSE}
@@ -73,9 +75,24 @@ count_ts_na <- function(x){
 
 
 
-## Ground truth
+Active Learning improves the results of a classification by feeding the classifier with informative samples. 
 
-```{r base_classification, echo=FALSE, fig.width=9, fig.height=5}
+Active Learning selects unlabeled samples from a data set using query strategies designed to take advantage of the labeled samples in the data set and also the   properties of the classifier. 
+Active Learning can be understood as a set made of a classifier (*C*), a set of samples both labeled (*L*) and unlabeled (*U*), a heuristic (*Q*), and a user (*S*). The user *S* assigns labels to the samples in *U* using *Q* as criterion, while the classifier *C* uses the samples in *L* to produce a classification model [@Crawford2013].
+
+
+
+## Reference classification {#reference_classification}
+
+To establish a base-line for comparing different Active Learning heuristics, we prepared a classification using the data available in the package sits [@Simoes2021]. 
+
+We are using sits' local cube MODIS TERRA collection 6 that covers Sinop, a Brazilian town in the state of Mato Grosso for the crop-year 2014(2013/09/14 - 2014/08/29).  
+The samples used for training a classification model also come from the sits package. The sits tibble containing the samples is called *samples_modis_4bands* and includes 1218 samples.
+
+This classification uses an ensemble algorithm (extreme gradient boosting XGBoost [@Chen2015]) and the vegetation indexes EVI and NDVI. Its results are shown below.
+
+
+```{r base_classification, echo=FALSE, fig.width=7, fig.height=4}
 
 #---- Do a full classification and use it as ground truth ----
 
@@ -126,9 +143,23 @@ plot(label_cube, main = "Ground truth")
 
 
 
-## Random sampling
+## Classification using Active Learning
 
-```{r random_sampling, echo=FALSE, fig.width=9, fig.height=5}
+In this section, we test some Active Learning heuristics. To achieve this, we  compare pixel by pixel the classification results using Active Learning to those of the [reference classification](#reference_classification). 
+Each AL classification includes a Figure showing the change in accuracy (overall, producer and user) as a function of the number of samples.
+
+
+
+### Random Sampling
+
+Random sampling is one heuristic for Active Learning. It consists on building a classification model using the training samples already available and then use it to classify a set of points randomly selected. These points are ranked using a metric computed using the pixels probability of belonging to each label. In this example, we used *Information Entropy* but *Least Confidence*, *Margin of Confidence*, and *Ratio of Confidence* are also available.
+
+Finally, the best ranked points are sent to a human expert (the *oracle*) for labeling and then are merged into the training data set and the process start over again.
+
+Active Learning by means of Random sampling is independent of the classifier.
+
+
+```{r random_sampling, echo=FALSE, fig.width=7, fig.height=4}
 
 # First set of samples for starting Active Learning.
 al_samples_tb <- samples_tb %>%
@@ -199,7 +230,7 @@ for (i in 1:n_iterations) {
 
 results_rs <- do.call(rbind, results_lt)
 results_rs <- as_tibble(results_rs)
-knitr::kable(results_rs, digits = 2)
+#knitr::kable(results_rs, digits = 2)
 
 acc_plot <- results_rs %>%
     tidyr::pivot_longer(-n_samples) %>%
@@ -216,9 +247,22 @@ plot(al_label_cube, main = "Random Sampling")
 
 
 
-## EGAL
+### EGAL: Exploration Guided Active Learning
 
-```{r egal, echo=FALSE, fig.width=9, fig.height=5}
+EGAL in an Active Learning heuristic that ranks unlabeled samples using on two measures: density and diversity [@Hu2010].
+
+Density measures the amount of neighbors of a sample. The more neighbors a sample has, the more unlikely the sample is an outlier. Outliers are low-density samples with high uncertainty that can trick Active Learning heuristics into selecting non-representative samples.
+
+Diversity promotes the exploration of the sample set. It is a measure of dissimilarity among samples and favors samples which are farther apart among the sample set.
+
+EGAL ranks candidate samples based on both their density and diversity, and selects those examples with the highest density for labelling first. Thus, examples close to each other in the feature space will not be selected successively for labelling [@Hu2010].
+
+Unlike Random Sampling, EGAL doesn't compute the classification probabilities of each point, it just needs density and diversity measures to rank the points to be sent to the oracle.
+
+Active Learning using EGAL is independent of the classifier.
+
+
+```{r egal, echo=FALSE, fig.width=7, fig.height=4}
 
 al_samples_tb <- al_samples_tb %>%
     dplyr::slice(1:n_samples)
@@ -285,7 +329,7 @@ for (i in 1:n_iterations) {
 }
 results_egal <- do.call(rbind, results_lt)
 results_egal <- as_tibble(results_egal)
-knitr::kable(results_egal, digits = 2)
+#knitr::kable(results_egal, digits = 2)
 
 acc_plot <- results_egal %>%
     tidyr::pivot_longer(-n_samples) %>%
@@ -300,3 +344,5 @@ plot(al_label_cube, main = "EGAL")
 
 ```
 
+
+## References
