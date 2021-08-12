@@ -264,9 +264,11 @@ Active Learning using EGAL is independent of the classifier.
 
 ```{r egal, echo=FALSE, fig.width=7, fig.height=4}
 
-al_samples_tb <- al_samples_tb %>%
-    dplyr::slice(1:n_samples)
-
+al_samples_tb <- samples_tb %>%
+    dplyr::group_by(label) %>%
+    dplyr::sample_n(5) %>%
+    dplyr::ungroup() %>%
+    magrittr::set_class(class(sits::samples_modis_4bands))
 
 results_lt <- list()
 for (i in 1:n_iterations) {
@@ -344,5 +346,100 @@ plot(al_label_cube, main = "EGAL")
 
 ```
 
+
+
+### Fast Cluster-Assumption
+
+Fast Cluster-Assumption is meant to only work with the Support Vector Machine classifier.  It is based on the assumption that the SVM's decision boundary (or the uncertainty region) lies between clusters of well classified samples. Fast Cluster-Assumption doesn't include any diversity criterion for selecting multiple samples [@Patra2011].
+
+By using a One-Against-All strategy, it arranges the results of SVM into a one-dimension line where the most likely members cluster towards the extremes. 
+Then, it computes an histogram and it identifies the uncertainty region using a threshold value which is determined using the Kapur's method for thresholding [@Kapur1985].
+
+
+```{r fast_cluster_assumption, echo=FALSE, fig.width=7, fig.height=4}
+
+svm_method <- sits::sits_svm()
+
+al_samples_tb <- samples_tb %>%
+    dplyr::group_by(label) %>%
+    dplyr::sample_n(5) %>%
+    dplyr::ungroup() %>%
+    magrittr::set_class(class(sits::samples_modis_4bands))
+
+results_lt <- list()
+for (i in 1:n_iterations) {
+    out_dir <- file.path(tempdir(), paste0("iter_fca_", i))
+    dir.create(out_dir)
+
+    # NOTE: Since the cube's extent is small, we can run a classification of the
+    #       whole area to estimate its accuracy. A more realistic scenario would
+    #       use sample points.
+    al_sits_model  <- sits::sits_train(al_samples_tb,
+                                       ml_method = svm_method)
+    al_probs_cube <- sits::sits_classify(data_cube,
+                                         ml_model = al_sits_model,
+                                         output_dir = out_dir,
+                                         memsize = 4,
+                                         multicores = n_multicores)
+    al_label_cube <- sits::sits_label_classification(al_probs_cube,
+                                                     output_dir = out_dir)
+    
+    # Compute classification's accuracy.
+    accuracy_vec <- compute_accuracy(
+        ref_rast = ref_rast,
+        pred_rast = rast(al_label_cube$file_info[[1]][["path"]]),
+        ref_labels = ref_labels
+    )
+    results_lt[[i]] <- c(n_samples = nrow(al_samples_tb), accuracy_vec)
+
+    if (i == n_iterations)
+        next()
+
+    # Get new samples from the pool of samples.
+    suppressMessages(
+      egal_samples <- al_samples_tb %>%
+        sits_al_egal(data_cube,
+                     multicores = n_multicores)
+    ) 
+    
+    oracle_samples <- egal_samples %>%
+        dplyr::arrange(dplyr::desc(egal)) %>% 
+        dplyr::slice(1:n_samples) %>%
+        dplyr::select(-egal)
+    
+    # NOTE: Here we should go to the oracle. Instead, we're getting labels from
+    #       the reference raster.
+    oracle_sf <-  sf::st_as_sf(oracle_samples,
+                               coords = c("longitude", "latitude"),
+                               crs = 4326) %>%
+        sf::st_transform(crs = crs(ref_rast))
+    oracle_labels <- terra::extract(ref_rast, terra::vect(oracle_sf)) %>%
+        pull(lyr1) %>%
+        recode(!!!ref_labels)
+
+    # Update the labels using data from the oracle.
+    oracle_samples[["label"]] <- oracle_labels
+
+    # Merge the new samples to the sample data set.
+    al_samples_tb <- al_samples_tb %>%
+        dplyr::bind_rows(oracle_samples)
+
+}
+results_fca <- do.call(rbind, results_lt)
+results_fca <- as_tibble(results_egal)
+#knitr::kable(results_fca, digits = 2)
+
+acc_plot <- results_fca %>%
+    tidyr::pivot_longer(-n_samples) %>%
+    ggplot2::ggplot() +
+    ggplot2::geom_line(ggplot2::aes(x = n_samples,
+                                    y = value,
+                                    color = name)) +
+    ggplot2::ggtitle("Active Learning - Fast Cluster-Assumption")
+print(acc_plot)
+
+plot(al_label_cube, main = "Fast Cluster-Assumption")
+
+```
 
 ## References
