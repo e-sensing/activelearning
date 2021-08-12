@@ -86,20 +86,6 @@ sits_al_egal <- function(samples_tb,
                                                                 na.rm = TRUE)
     }
 
-    # Compute density
-    N_mat <- similarity_mt
-    diag(N_mat) <- NA
-    N_mat[N_mat < alpha] <- NA
-    density_vec <- rowSums(N_mat, na.rm = TRUE)
-    stopifnot(length(density_vec) == nrow(dataset_tb))
-
-    # Compute diversity. NOTE: In L_mat, the rows are the dataset D and the
-    # columns are the labeled samples L
-    L_mat <- similarity_mt[, 1:nrow(samples_tb)]
-    diag(L_mat) <- NA
-    diversity_vec <- 1 / apply(L_mat, MARGIN = 1, FUN = max, na.rm = TRUE)
-    stopifnot(length(density_vec) == length(diversity_vec))
-
     # Build the candidate set. NOTE: In CS_mat, the rows are the Unlabeled
     # samples and the columns are the Labeled samples.
     CS_mat <- similarity_mt
