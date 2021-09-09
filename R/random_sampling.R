@@ -35,7 +35,7 @@ sits_al_random_sampling <- function(samples_tb, sits_method,
     # Avoid warning while checking the cube.
     entropy <- NULL
 
-    sits:::.sits_tibble_test(samples_tb)
+    sits:::.sits_test_tibble(samples_tb)
 
     # precondition: A method is given.
     assertthat::assert_that(
@@ -72,7 +72,7 @@ sits_al_random_sampling <- function(samples_tb, sits_method,
     points_tb[["predicted"]] <- NULL
 
     # postcondition: We return a valid sits tibble with additional columns.
-    sits:::.sits_tibble_test(points_tb)
+    sits:::.sits_test_tibble(points_tb)
 
     return(points_tb)
 }
