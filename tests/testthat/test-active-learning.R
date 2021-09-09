@@ -19,7 +19,7 @@ test_that("Generate samples for active learning using random selection", {
                                            n_samples = 100,
                                            multicores = 1)
 
-    expect_true(sits:::.sits_tibble_test(new_samples))
+    expect_true(sits:::.sits_test_tibble(new_samples))
     expect_true(inherits(new_samples, "sits"))
     expect_true(nrow(new_samples) == 100)
     expect_true(all(c("entropy", "least_conf",
@@ -60,7 +60,7 @@ test_that("Generate samples for active learning using EGAL algorithm", {
                                 n_samples = 100,
                                 multicores = 1)
 
-    expect_true(sits:::.sits_tibble_test(new_samples))
+    expect_true(sits:::.sits_test_tibble(new_samples))
     expect_true(inherits(new_samples, "sits"))
     expect_true("egal" %in% colnames(new_samples))
 
