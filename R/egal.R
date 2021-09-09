@@ -50,13 +50,70 @@ sits_al_egal <- function(samples_tb,
                          n_samples = 1000,
                          multicores = 2) {
 
-    sits:::.sits_tibble_test(samples_tb)
+    sits:::.sits_test_tibble(samples_tb)
 
     assertthat::assert_that(
         !purrr::is_null(data_cube),
         msg = "sits_al_egal: please provide data cube"
     )
 
+    points_tb <- .sits_get_random_points(data_cube, n_samples, multicores)
+
+    points_tb <- .sits_egal(s_labelled_tb = samples_tb,
+                            s_unlabelled_tb = points_tb,
+                            alpha = alpha,
+                            beta = beta,
+                            w = w)
+
+    # postcondition: We return a valid sits with additional columns.
+    sits:::.sits_test_tibble(points_tb)
+
+    return(points_tb)
+}
+
+
+
+
+#' @title Implementation of Exploration Guided Active Learning (EGAL)
+#'
+#' @name .sits_egal
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description This function returns a sits tibble with their score in the
+#' metric Exploration Guided Active Learning (EGAL). Samples with a larger EGAL
+#' metric should be submitted first to a human expert for classification.
+#'
+#' @param s_labelled_tb   A sits tibble with labelled samples.
+#' @param s_unlabelled_tb A sits tibble with unlabelled samples.
+#' @param sim_method      A character. A method for computing the similarity
+#'                        among samples as described in the function dist in the
+#'                        package proxy.
+#' @param alpha           A double. It controls the radius of the neighborhood
+#'                        used in the estimation of sample density.
+#' @param beta            A double. It controls the radius of the neighborhood
+#'                        used in the estimation of the sample candidate set. A
+#'                        bigger beta gives a bigger set. By default is set to
+#'                        be equal to alpha. If NULL, it is computed internally.
+#' @param w               A numeric (between 0 and 1) only used when beta is
+#'                        NULL. This proportion parameter balances the influence
+#'                        of diversity and density in the selection strategy.
+#'                        When w is 0, EGAL becomes a pure-diversity
+#'                        and when w is 1, EGAL becomes a pure density-based
+#'                        sampling algorithm.
+#' @return                A sits tibble with the EGAL metric. This metric
+#'                        ranks samples based on their density and diversity.
+#'                        Those samples with highest EGAL should be selected
+#'                        first for labeling.
+#'
+.sits_egal <- function(s_labelled_tb,
+                       s_unlabelled_tb,
+                       sim_method = "correlation",
+                       alpha = NULL,
+                       beta = alpha,
+                       w = 0.5) {
     # NOTE:
     # - D is a dataset consisting of:
     # - U pool of unlabeled examples.
@@ -69,8 +126,8 @@ sits_al_egal <- function(samples_tb,
     #     labelled neighbor.
 
     # Get new samples and merge them to the original sits tibble.
-    points_tb <- .sits_get_random_points(data_cube, n_samples, multicores)
-    dataset_tb <- dplyr::bind_rows(samples_tb, points_tb)
+    dataset_tb <- dplyr::bind_rows(s_labelled_tb,
+                                   s_unlabelled_tb)
 
     # Compute similarity.
     time_series <- as.matrix(sits:::.sits_distances(dataset_tb)[,-2:0])
@@ -90,7 +147,8 @@ sits_al_egal <- function(samples_tb,
     # Build the candidate set. NOTE: In CS_mat, the rows are the Unlabeled
     # samples and the columns are the Labeled samples.
     CS_mat <- similarity_mt
-    CS_mat <- CS_mat[(nrow(samples_tb) + 1):nrow(CS_mat), 1:nrow(samples_tb)]
+    CS_mat <- CS_mat[(nrow(s_labelled_tb) + 1):nrow(CS_mat),
+                     1:nrow(s_labelled_tb)]
 
     # Update beta
     if (is.null(beta)) {
@@ -105,14 +163,13 @@ sits_al_egal <- function(samples_tb,
     }, beta = beta)
     names(cs_vec) <- NULL
 
+    points_tb <- s_unlabelled_tb
     points_tb["egal"] <- cs_vec
     points_tb <- points_tb[order(points_tb[["egal"]], decreasing = TRUE), ]
 
-    # postcondition: We return a valid sits with additional columns.
-    sits:::.sits_tibble_test(points_tb)
-
     return(points_tb)
 }
+
 
 
 #' @title Compute a new value for the beta parameter.
