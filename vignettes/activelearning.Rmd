@@ -142,7 +142,7 @@ names(ref_labels) <- as.character(1:length(ref_labels))
 # Get a raster with the ground truth.
 ref_rast <- rast(label_cube[["file_info"]][[1]][["path"]])
 
-plot(label_cube, main = "Ground truth")
+plot(label_cube, title = "Ground truth")
 
 ```
 
@@ -238,7 +238,7 @@ results_rs <- as_tibble(results_rs)
 #knitr::kable(results_rs, digits = 2)
 
 acc_plot <- results_rs %>%
-    dplyr::select(n_samples, tidyselect::ends_with("_f1")) %>% 
+    dplyr::select(n_samples, Accuracy, tidyselect::ends_with("_f1")) %>% 
     tidyr::pivot_longer(-n_samples) %>%
     ggplot2::ggplot() +
     ggplot2::geom_line(ggplot2::aes(x = n_samples,
@@ -247,7 +247,7 @@ acc_plot <- results_rs %>%
     ggplot2::ggtitle("Active Learning - Random sampling")
 print(acc_plot)
 
-plot(al_label_cube, main = "Random Sampling")
+plot(al_label_cube, title = "Random Sampling")
 
 ```
 
@@ -265,7 +265,7 @@ EGAL ranks candidate samples based on both their density and diversity, and sele
 
 Unlike Random Sampling, EGAL doesn't compute the classification probabilities of each point, it just needs density and diversity measures to rank the points to be sent to the oracle.
 
-Active Learning using EGAL is independent of the classifier.
+Note that Active Learning using EGAL is independent of the classifier (unlike random sampling). In consequence, it is possible to build a large set of points for the oracle from several iterations without doing a classification.
 
 
 ```{r egal, echo=FALSE, fig.width=7, fig.height=4}
@@ -340,7 +340,7 @@ results_egal <- as_tibble(results_egal)
 #knitr::kable(results_egal, digits = 2)
 
 acc_plot <- results_egal %>%
-    dplyr::select(n_samples, tidyselect::ends_with("_f1")) %>% 
+    dplyr::select(n_samples, Accuracy, tidyselect::ends_with("_f1")) %>% 
     tidyr::pivot_longer(-n_samples) %>%
     ggplot2::ggplot() +
     ggplot2::geom_line(ggplot2::aes(x = n_samples,
@@ -349,7 +349,7 @@ acc_plot <- results_egal %>%
     ggplot2::ggtitle("Active Learning - EGAL")
 print(acc_plot)
 
-plot(al_label_cube, main = "EGAL")
+plot(al_label_cube, title = "EGAL")
 
 ```
 
