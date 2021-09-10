@@ -5,12 +5,24 @@ Authors@R:
     person(given = "Alber",
            family = "Sánchez",
            role = c("aut", "cre"),
-           email = "first.last@example.com",
-           comment = c(ORCID = "YOUR-ORCID-ID"))
+           email = "alber.ipia@inpe.br",
+           comment = c(ORCID = "0000-0001-7966-2880"))
 Description: Active Learning improves the results of a classification 
     by feeding the classifier with informative samples.
-License: GPL (>= 3)
+License: GPL (>= 3) | file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
+Imports:
+    assertthat, 
+    dplyr,
+    purrr,
+    sf,
+    sits
+Suggests: 
+    rmarkdown,
+    knitr,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+VignetteBuilder: knitr
