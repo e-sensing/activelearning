@@ -54,7 +54,8 @@ sampling algorithm.}
 Active Learning improves the results of a classification by
 feeding the classifier with informative samples. This function returns a sits
 tibble of new samples selected at random along with their score in the metric
-Exploration Guided Active Learning (EGAL).
+Exploration Guided Active Learning (EGAL). Samples with a larger EGAL metric
+should be submitted first to a human expert for classification.
 }
 \references{
 Hu, R., Jane Delany, S., & Mac Namee, B. (2010). EGAL:
