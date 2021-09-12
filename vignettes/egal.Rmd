@@ -1,0 +1,255 @@
+---
+title: "egal"
+output: rmarkdown::html_vignette
+bibliography: references.bib  
+vignette: >
+  %\VignetteIndexEntry{egal}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+library(activelearning)
+library(sits)
+library(caret)
+library(dplyr)
+library(ensurer)
+library(magrittr)
+library(terra)
+
+n_samples <- 20
+n_iterations <- 20
+n_multicores <- parallel::detectCores() / 2
+
+```
+
+
+
+```{r util, include=FALSE}
+
+#' Compute accuracy by comparing a reference to a prediction raster.
+#'
+#' @param ref_rast   A terra's raster of reference.
+#' @param pred_rast  A terra's raster with predictions.
+#' @param ref_labels A named character. The names of the labels in ref_rast.
+#' @return           A named numeric character. The overall, producer and user
+#'                   accuracy.
+compute_accuracy <- function(ref_rast, pred_rast, ref_labels) {
+
+    reference_vec  <- dplyr::recode(ref_rast[],  !!!ref_labels)
+    prediction_vec <- dplyr::recode(pred_rast[], !!!ref_labels)
+
+    conf_mat <- caret::confusionMatrix(data = factor(prediction_vec,
+                                                     levels = ref_labels),
+                                       reference = factor(reference_vec,
+                                                          levels = ref_labels))
+    cf_mat <- as.matrix(conf_mat[["table"]])
+    overall_accuracy  <- conf_mat$overall["Accuracy"]
+    
+    by_class <- conf_mat[["byClass"]]
+    f1_score <- by_class[, "F1"]
+    prod_acc <- by_class[, "Pos Pred Value"]
+    user_acc <- by_class[, "Sensitivity"]
+    class_names <- stringr::str_sub(rownames(by_class), 8)
+    names(f1_score) <- paste0(class_names, "_f1") 
+    names(prod_acc) <- paste0(class_names, "_pa")
+    names(user_acc) <- paste0(class_names, "_ua")
+
+    pua <- c(f1_score, prod_acc, user_acc)
+    pua <- pua[match(sort(names(pua)), names(pua))]
+
+    return(c(overall_accuracy, pua))
+}
+
+#' Count the number of NAs in a tibble.
+#'
+#' @param x A tibble.
+#' @return  An integer.
+#'                   accuracy.
+count_ts_na <- function(x){
+  sum(is.na(x))
+}
+
+```
+
+
+
+Active Learning improves the results of a classification by feeding the classifier with informative samples. 
+
+Active Learning selects unlabeled samples from a data set using query strategies designed to take advantage of the labeled samples in the data set and also the   properties of the classifier. 
+Active Learning can be understood as a set made of a classifier (*C*), a set of samples both labeled (*L*) and unlabeled (*U*), a heuristic (*Q*), and a user (*S*). The user *S* assigns labels to the samples in *U* using *Q* as criterion, while the classifier *C* uses the samples in *L* to produce a classification model [@Crawford2013].
+
+
+
+## Reference classification {#reference_classification}
+
+To establish a base-line for comparing different Active Learning heuristics, we prepared a classification using the data available in the package sits [@Simoes2021]. 
+
+We are using sits' local cube MODIS TERRA collection 6 that covers Sinop, a Brazilian town in the state of Mato Grosso for the crop-year 2014(2013/09/14 - 2014/08/29).  
+The samples used for training a classification model also come from the sits package. The sits tibble containing the samples is called *samples_modis_4bands* and includes 1218 samples.
+
+This classification uses an ensemble algorithm (extreme gradient boosting XGBoost [@Chen2015]) and the vegetation indexes EVI and NDVI. Its results are shown below.
+
+
+
+```{r base_classification, echo=FALSE, fig.width=7, fig.height=4}
+
+#---- Do a full classification and use it as ground truth ----
+
+classification_interval <- c(as.Date("2013-09-14"),
+                             as.Date("2014-08-29"))
+
+samples_tb <- sits::samples_modis_4bands %>%
+    sits::sits_select(bands = c("NDVI", "EVI")) %>%
+    # Test for NA in the time series.
+    dplyr::mutate(n_na = purrr::map_int(time_series, count_ts_na)) %>%
+    ensurer::ensure_that(all(.$n_na == 0),
+                         err_desc = "NAs found!") %>%
+    dplyr::select(-n_na)
+
+data_cube <- sits::sits_cube(
+    source = "LOCAL",
+    name = "sinop-2014",
+    satellite = "TERRA",
+    sensor = "MODIS",
+    data_dir = system.file("extdata/raster/mod13q1", package = "sits"),
+    delim = "_",
+    parse_info = c("X1", "X2", "tile", "band", "date"),
+    start_date = dplyr::first(classification_interval),
+    end_date   = dplyr::last(classification_interval)
+)
+
+sits_method <- sits::sits_xgboost(verbose = FALSE)
+#sits_method <- sits::sits_rfor(num_trees = 1000)
+sits_model  <- sits::sits_train(samples_tb, ml_method = sits_method)
+probs_cube  <- sits::sits_classify(data_cube,
+                                   ml_model = sits_model,
+                                   output_dir = tempdir(),
+                                   memsize = 4,
+                                   multicores = 1)
+
+label_cube <- sits::sits_label_classification(probs_cube,
+                                              output_dir = tempdir())
+
+ref_labels <- environment((sits_model))[["labels"]]
+names(ref_labels) <- as.character(1:length(ref_labels))
+
+# Get a raster with the ground truth.
+ref_rast <- rast(label_cube[["file_info"]][[1]][["path"]])
+
+plot(label_cube, title = "Ground truth")
+
+```
+
+
+
+### EGAL: Exploration Guided Active Learning
+
+EGAL in an Active Learning heuristic that ranks unlabeled samples using on two measures: density and diversity [@Hu2010].
+
+Density measures the amount of neighbors of a sample. The more neighbors a sample has, the more unlikely the sample is an outlier. Outliers are low-density samples with high uncertainty that can trick Active Learning heuristics into selecting non-representative samples.
+
+Diversity promotes the exploration of the sample set. It is a measure of dissimilarity among samples and favors samples which are farther apart among the sample set.
+
+EGAL ranks candidate samples based on both their density and diversity, and selects those examples with the highest density for labelling first. Thus, examples close to each other in the feature space will not be selected successively for labelling [@Hu2010].
+
+Unlike Random Sampling, EGAL doesn't compute the classification probabilities of each point, it just needs density and diversity measures to rank the points to be sent to the oracle.
+
+Note that Active Learning using EGAL is independent of the classifier (unlike random sampling). In consequence, it is possible to build a large set of points for the oracle from several iterations without doing a classification.
+
+
+
+```{r egal, echo=FALSE, fig.width=7, fig.height=4}
+
+al_samples_tb <- samples_tb %>%
+    dplyr::group_by(label) %>%
+    dplyr::sample_n(5) %>%
+    dplyr::ungroup() %>%
+    magrittr::set_class(class(sits::samples_modis_4bands))
+
+oracle_samples <- tibble::tibble()
+for (i in 1:n_iterations) {
+  
+  # Get new samples from the pool of samples.
+  suppressMessages(
+    egal_samples <- al_samples_tb %>%
+      # NOTE: If I comment the next line (i.e. only using al_samples_tb) in all 
+      #       iterations increases the accuracy!
+      dplyr::bind_rows(oracle_samples) %>%
+      sits_al_egal(data_cube,
+                   multicores = n_multicores) %>% 
+      dplyr::arrange(dplyr::desc(egal)) %>% 
+      dplyr::slice(1:n_samples) %>%
+      dplyr::select(-egal)
+  ) 
+  
+  oracle_samples <- oracle_samples %>% 
+    dplyr::bind_rows(egal_samples)
+}
+
+# NOTE: Here we should go to the oracle. Instead, we're getting labels from
+#       the reference raster.
+oracle_sf <-  sf::st_as_sf(oracle_samples,
+                           coords = c("longitude", "latitude"),
+                           crs = 4326) %>%
+  sf::st_transform(crs = crs(ref_rast))
+oracle_labels <- terra::extract(ref_rast, terra::vect(oracle_sf)) %>%
+  pull(lyr1) %>%
+  recode(!!!ref_labels)
+
+# Update the labels using data from the oracle.
+oracle_samples[["label"]] <- oracle_labels
+
+# Merge the new samples to the sample data set.
+al_samples_tb <- al_samples_tb %>%
+  dplyr::bind_rows(oracle_samples)
+
+# NOTE: Since the cube's extent is small, we can run a classification of the
+#       whole area to estimate its accuracy. A more realistic scenario would
+#       use sample points.
+out_dir <- file.path(tempdir(), paste0("iter_egal_", i))
+dir.create(out_dir)
+
+al_sits_model  <- sits::sits_train(al_samples_tb,
+                                   ml_method = sits_method)
+al_probs_cube <- sits::sits_classify(data_cube,
+                                     ml_model = al_sits_model,
+                                     output_dir = out_dir,
+                                     memsize = 4,
+                                     multicores = n_multicores)
+al_label_cube <- sits::sits_label_classification(al_probs_cube,
+                                                 output_dir = out_dir)
+    
+# Compute classification's accuracy.
+accuracy_vec <- compute_accuracy(
+  ref_rast = ref_rast,
+  pred_rast = rast(al_label_cube$file_info[[1]][["path"]]),
+  ref_labels = ref_labels
+)
+
+accuracy_vec <- c(n_samples = nrow(al_samples_tb), accuracy_vec)
+
+results_egal <- accuracy_vec %>%
+  data.frame() %>%
+  t() %>%
+  magrittr::set_colnames(names(accuracy_vec)) %>%
+  as_tibble()
+
+knitr::kable(results_egal, digits = 2)
+
+plot(al_label_cube, title = "EGAL")
+
+```
+
+
+
+## References

@@ -1,14 +1,16 @@
 ---
-title: "Active Learning"
+title: "Active learning using random sampling"
 output: rmarkdown::html_vignette
 bibliography: references.bib  
 vignette: >
-  %\VignetteIndexEntry{activelearning}
+  %\VignetteIndexEntry{random_sampling}
   %\VignetteEncoding{UTF-8}
   %\VignetteEngine{knitr::rmarkdown}
 editor_options: 
   chunk_output_type: console
 ---
+
+
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
@@ -29,6 +31,7 @@ n_iterations <- 20
 n_multicores <- parallel::detectCores() / 2
 
 ```
+
 
 
 ```{r util, include=FALSE}
@@ -95,6 +98,8 @@ We are using sits' local cube MODIS TERRA collection 6 that covers Sinop, a Braz
 The samples used for training a classification model also come from the sits package. The sits tibble containing the samples is called *samples_modis_4bands* and includes 1218 samples.
 
 This classification uses an ensemble algorithm (extreme gradient boosting XGBoost [@Chen2015]) and the vegetation indexes EVI and NDVI. Its results are shown below.
+
+
 
 
 ```{r base_classification, echo=FALSE, fig.width=7, fig.height=4}
@@ -235,7 +240,7 @@ for (i in 1:n_iterations) {
 
 results_rs <- do.call(rbind, results_lt)
 results_rs <- as_tibble(results_rs)
-#knitr::kable(results_rs, digits = 2)
+knitr::kable(results_rs, digits = 2)
 
 acc_plot <- results_rs %>%
     dplyr::select(n_samples, Accuracy, tidyselect::ends_with("_f1")) %>% 
@@ -252,116 +257,5 @@ plot(al_label_cube, title = "Random Sampling")
 ```
 
 
-
-### EGAL: Exploration Guided Active Learning
-
-EGAL in an Active Learning heuristic that ranks unlabeled samples using on two measures: density and diversity [@Hu2010].
-
-Density measures the amount of neighbors of a sample. The more neighbors a sample has, the more unlikely the sample is an outlier. Outliers are low-density samples with high uncertainty that can trick Active Learning heuristics into selecting non-representative samples.
-
-Diversity promotes the exploration of the sample set. It is a measure of dissimilarity among samples and favors samples which are farther apart among the sample set.
-
-EGAL ranks candidate samples based on both their density and diversity, and selects those examples with the highest density for labelling first. Thus, examples close to each other in the feature space will not be selected successively for labelling [@Hu2010].
-
-Unlike Random Sampling, EGAL doesn't compute the classification probabilities of each point, it just needs density and diversity measures to rank the points to be sent to the oracle.
-
-Note that Active Learning using EGAL is independent of the classifier (unlike random sampling). In consequence, it is possible to build a large set of points for the oracle from several iterations without doing a classification.
-
-
-```{r egal, echo=FALSE, fig.width=7, fig.height=4}
-
-al_samples_tb <- samples_tb %>%
-    dplyr::group_by(label) %>%
-    dplyr::sample_n(5) %>%
-    dplyr::ungroup() %>%
-    magrittr::set_class(class(sits::samples_modis_4bands))
-
-results_lt <- list()
-for (i in 1:n_iterations) {
-    out_dir <- file.path(tempdir(), paste0("iter_egal_", i))
-    dir.create(out_dir)
-
-    # NOTE: Since the cube's extent is small, we can run a classification of the
-    #       whole area to estimate its accuracy. A more realistic scenario would
-    #       use sample points.
-    al_sits_model  <- sits::sits_train(al_samples_tb,
-                                       ml_method = sits_method)
-    al_probs_cube <- sits::sits_classify(data_cube,
-                                         ml_model = al_sits_model,
-                                         output_dir = out_dir,
-                                         memsize = 4,
-                                         multicores = n_multicores)
-    al_label_cube <- sits::sits_label_classification(al_probs_cube,
-                                                     output_dir = out_dir)
-    
-    # Compute classification's accuracy.
-    accuracy_vec <- compute_accuracy(
-        ref_rast = ref_rast,
-        pred_rast = rast(al_label_cube$file_info[[1]][["path"]]),
-        ref_labels = ref_labels
-    )
-    results_lt[[i]] <- c(n_samples = nrow(al_samples_tb), accuracy_vec)
-
-    if (i == n_iterations)
-        next()
-
-    # Get new samples from the pool of samples.
-    suppressMessages(
-      egal_samples <- al_samples_tb %>%
-        sits_al_egal(data_cube,
-                     multicores = n_multicores)
-    ) 
-    
-    oracle_samples <- egal_samples %>%
-        dplyr::arrange(dplyr::desc(egal)) %>% 
-        dplyr::slice(1:n_samples) %>%
-        dplyr::select(-egal)
-    
-    # NOTE: Here we should go to the oracle. Instead, we're getting labels from
-    #       the reference raster.
-    oracle_sf <-  sf::st_as_sf(oracle_samples,
-                               coords = c("longitude", "latitude"),
-                               crs = 4326) %>%
-        sf::st_transform(crs = crs(ref_rast))
-    oracle_labels <- terra::extract(ref_rast, terra::vect(oracle_sf)) %>%
-        pull(lyr1) %>%
-        recode(!!!ref_labels)
-
-    # Update the labels using data from the oracle.
-    oracle_samples[["label"]] <- oracle_labels
-
-    # Merge the new samples to the sample data set.
-    al_samples_tb <- al_samples_tb %>%
-        dplyr::bind_rows(oracle_samples)
-
-}
-results_egal <- do.call(rbind, results_lt)
-results_egal <- as_tibble(results_egal)
-#knitr::kable(results_egal, digits = 2)
-
-acc_plot <- results_egal %>%
-    dplyr::select(n_samples, Accuracy, tidyselect::ends_with("_f1")) %>% 
-    tidyr::pivot_longer(-n_samples) %>%
-    ggplot2::ggplot() +
-    ggplot2::geom_line(ggplot2::aes(x = n_samples,
-                                    y = value,
-                                    color = name)) +
-    ggplot2::ggtitle("Active Learning - EGAL")
-print(acc_plot)
-
-plot(al_label_cube, title = "EGAL")
-
-```
-
-
-
-### Fast Cluster-Assumption
-
-Fast Cluster-Assumption is meant to only work with the Support Vector Machine classifier.  It is based on the assumption that the SVM's decision boundary (or the uncertainty region) lies between clusters of well classified samples. Fast Cluster-Assumption doesn't include any diversity criterion for selecting multiple samples [@Patra2011].
-
-By using a One-Against-All strategy, it arranges the results of SVM into a one-dimension line where the most likely members cluster towards the extremes. 
-Then, it computes an histogram and it identifies the uncertainty region using a threshold value which is determined using the Kapur's method for thresholding [@Kapur1985].
-
-NOTE: Not implemented
 
 ## References
