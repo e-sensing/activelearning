@@ -1,21 +1,21 @@
-#' @title Implementation of Active Learning using a random sampling stategy.
+#' @title Implementation of Active Learning using a random sampling strategy.
 #'
-#' @name sits_al_random_sampling
+#' @name al_random_sampling
 #'
 #' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
 #'
 #' @description Active Learning improves the results of a classification by
-#' feeding the classifier with informative samples. This function returns a sits
-#' tibble of new samples selected at random and some metrics useful for
-#' selecting the samples to be sent to an expert for labeling.
+#' feeding the classifier with informative samples. This function receives a
+#' set of labelled and unlabelled samples. The labelled samples are used to
+#' train a model which is then used to classify the unlabelled samples and then
+#' it computes some metrics on the results. These metrics are useful for
+#' selecting the samples to be sent to an expert (oracle) for labeling.
 #'
-#' These new_samples could be merged to the original samples (samples_tb) to
-#' increase the number of training data set.
+#' This function receives a sits tibble and it returns it with metrics. However,
+#' this function doesn't guarantee the order of the returned samples.
 #'
 #' @param samples_tb  A sits tibble.
 #' @param sits_method A sits model specification.
-#' @param data_cube   A sits data cube.
-#' @param n_samples   The number of random points to take.
 #' @param multicores  The number of cores available for active learning.
 #' @return            A sits tibble with metrics. Entropy is a measure of the
 #'                    amount of information in the probabilities of each label;
@@ -27,60 +27,108 @@
 #'                    confident predictions. Ratio of Confidence is the ratio
 #'                    between the top two most confident predictions.
 #' @export
-sits_al_random_sampling <- function(samples_tb, sits_method,
-                                    data_cube,
-                                    n_samples = 1000,
-                                    multicores = 2){
-
-    # Avoid warning while checking the cube.
-    entropy <- NULL
+al_random_sampling <- function(samples_tb,
+                               sits_method,
+                               multicores = 1){
 
     sits:::.sits_test_tibble(samples_tb)
 
-    # precondition: A method is given.
+    .al_check_time_series(samples_tb)
+
     assertthat::assert_that(
         !purrr::is_null(sits_method),
-        msg = "sits_al_random_sampling: please provide a classification method"
+        msg = "al_random_sampling: please provide a classification method."
     )
 
-    # precondition: A data cube is given.
+    label_tb <- samples_tb %>%
+        dplyr::filter(nchar(label) > 0,
+                      label != "NoClass")
+
+    no_label_tb <- samples_tb %>%
+        dplyr::filter(is.na(label) | label == "" | label == "NoClass")
+
     assertthat::assert_that(
-        !purrr::is_null(data_cube),
-        msg = "sits_al_random_sampling: please provide a data cube"
+        nrow(label_tb) > 0,
+        msg = "al_random_sampling: please provide some labelled samples"
     )
 
-    # Classify the new samples
-    my_model <- sits::sits_train(data = samples_tb,
-                                 ml_method = sits_method)
+    assertthat::assert_that(
+        nrow(no_label_tb) > 0,
+        msg = "al_random_sampling: please provide some unlabelled samples"
+    )
 
-    points_tb <- .sits_get_random_points(data_cube = data_cube,
-                                         n_samples = n_samples,
-                                         multicores = multicores)
+    rs_tb <- .al_rs(s_labelled_tb = label_tb,
+                    s_unlabelled_tb = no_label_tb,
+                    sits_method = sits_method,
+                    multicores = multicores)
 
-    points_tb <- sits::sits_classify(data = points_tb,
-                                     ml_model = my_model,
-                                     multicores = multicores)
+    points_tb <- label_tb %>%
+        dplyr::mutate(entropy     = NA,
+                      least_conf  = NA,
+                      margin_conf = NA,
+                      ratio_conf  = NA,
+                      new_label   = NA) %>%
+        dplyr::bind_rows(rs_tb)
 
-    # Compute metrics using the new sample points.
-    metrics <- lapply(seq_len(nrow(points_tb)),
-                      .sits_compute_metrics,
-                      points_tb = points_tb)
-    points_tb <- dplyr::bind_cols(points_tb, do.call(rbind, metrics))
-    points_tb <- dplyr::arrange(points_tb, dplyr::desc(entropy))
-    points_tb[["label"]] <- points_tb[["new_label"]]
-    points_tb[["new_label"]] <- NULL
-    points_tb[["predicted"]] <- NULL
-
-    # postcondition: We return a valid sits tibble with additional columns.
     sits:::.sits_test_tibble(points_tb)
 
     return(points_tb)
 }
 
 
+
+#' @title Implementation of Active Learning using random sampling
+#'
+#' @name .al_rs
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description This function returns a sits tibble with metrics.
+#'
+#' @param s_labelled_tb   A sits tibble with labelled samples.
+#' @param s_unlabelled_tb A sits tibble with unlabelled samples.
+#' @param sits_method A sits model specification.
+#' @param multicores  The number of cores available for active learning.
+#' @return            A sits tibble with metrics. Entropy is a measure of the
+#'                    amount of information in the probabilities of each label;
+#'                    the samples with largest entropy are the best candidates
+#'                    for labeling by human experts. Least Confidence is the
+#'                    difference between the most confident prediction and 100%
+#'                    confidence normalized by the number of labels. Margin of
+#'                    Confidence is the difference between the two most
+#'                    confident predictions. Ratio of Confidence is the ratio
+#'                    between the top two most confident predictions.
+#'
+.al_rs <- function(s_labelled_tb,
+                   s_unlabelled_tb,
+                   sits_method,
+                   multicores) {
+
+    my_model <- sits::sits_train(data = s_labelled_tb,
+                                 ml_method = sits_method)
+
+    points_tb <- sits::sits_classify(data = s_unlabelled_tb,
+                                     ml_model = my_model,
+                                     multicores = multicores)
+
+    metrics <- lapply(seq_len(nrow(points_tb)),
+                      .al_rs_compute_metrics,
+                      points_tb = points_tb)
+
+    points_tb <- dplyr::bind_cols(points_tb, do.call(rbind, metrics))
+    points_tb <- dplyr::arrange(points_tb, dplyr::desc(entropy))
+    points_tb[["predicted"]] <- NULL
+
+    return(points_tb)
+}
+
+
+
 #' @title Compute metrics of active learning using random sampling.
 #'
-#' @name .sits_compute_metrics
+#' @name .al_compute_metrics
 #'
 #' @keywords internal
 #'
@@ -93,15 +141,23 @@ sits_al_random_sampling <- function(samples_tb, sits_method,
 #'
 #' @return           A sits tibble of samples, including their time series.
 #'
-.sits_compute_metrics <- function(x, points_tb){
+.al_rs_compute_metrics <- function(x, points_tb){
+
     pred_df <- points_tb[x, ][["predicted"]][[1]]
+
     probs <- unlist(pred_df[["probs"]][[1]])
+
     least_conf <- (1 - max(probs)) * length(probs) / (length(probs) - 1)
+
     best_two <- sort(probs, decreasing = TRUE)[1:2]
     names(best_two) <- NULL
+
     margin_conf <- 1 - (best_two[1] - best_two[2])
+
     ratio_conf <- best_two[1] / best_two[2]
+
     entropy <- -1 * sum(probs * log(probs))
+
     data.frame(entropy = entropy,
                least_conf = least_conf,
                margin_conf = margin_conf,

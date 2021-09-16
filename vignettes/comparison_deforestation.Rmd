@@ -1,0 +1,315 @@
+---
+title: "comparison_deforestation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{comparison_deforestation}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, echo=FALSE}
+
+library(activelearning)
+library(dplyr)
+library(caret)
+
+sits_method <- sits::sits_xgboost(verbose = FALSE)
+
+# Get samples of deforestation.
+samples_tb <- system.file("extdata/samples.rds",
+                          package = "activelearning") %>%
+  readRDS() %>%
+  dplyr::mutate(sample_id = 1:nrow(.))
+
+# Get the labels used in the samples.
+reference_labels <- samples_tb %>% 
+  dplyr::pull(label) %>% 
+  unique() %>%
+  sort() %>% 
+  magrittr::set_names(1:length(.))
+ 
+# Initial number of labels to be taken from each label.
+n_labelled   <- 3
+
+# Number of labels to be selected on each iteration.
+n_samples    <- length(reference_labels) * 3
+
+# Number of iterations
+n_iterations <- 10
+
+# Number of experiments
+n_experiments <- 30
+
+# Get an initial set of samples 
+labelled_samples <- samples_tb %>%
+  dplyr::group_by(label) %>% 
+  dplyr::sample_n(size = n_labelled) %>%
+  dplyr::ungroup()
+
+accuracy_tb <- tibble::tibble()
+
+```
+
+
+
+```{r util, echo=FALSE}
+
+#' Get accuracy metrics from a caret's confusion matrix.
+#'
+#' @param conf_mat A confusion matrix objetc.
+#' @return         A numeric.
+get_acc <- function(conf_mat) {
+    overall_accuracy  <- conf_mat$overall["Accuracy"]
+    by_class <- conf_mat[["byClass"]]
+    f1_score <- by_class[, "F1"]
+    prod_acc <- by_class[, "Pos Pred Value"]
+    user_acc <- by_class[, "Sensitivity"]
+    class_names <- stringr::str_sub(rownames(by_class), 8)
+    
+    tibble::tibble(class = class_names,
+                   metric = "f1",
+                   accuracy = f1_score) %>%
+      dplyr::bind_rows(tibble::tibble(class = class_names,
+                                      metric = "prod_acc",
+                                      accuracy = prod_acc)) %>% 
+      dplyr::bind_rows(tibble::tibble(class = class_names,
+                                      metric = "user_acc",
+                                      accuracy = user_acc)) %>%
+      dplyr::add_row(class = "overall",
+                     metric = "accuracy",
+                     accuracy = overall_accuracy) %>% 
+      return()
+}
+
+
+
+#' Helper function for running a sits classification on sample points and get 
+#' its accuracy
+#'
+#' @param training_samples A sits tibble.
+#' @param samples_tb       A sits tibble with all the samples (including 
+#'                         training_samples).
+#' @param sits_method      A sits classification method.
+#' @param reference_labels A character. The labels used during the 
+#'                         classification.
+#' @return                 A tibble with the accuracy of the classification. 
+run_iteration <- function(training_samples, 
+                          samples_tb, 
+                          sits_method,
+                          reference_labels){
+  
+  classification_model  <- sits::sits_train(training_samples, 
+                                            ml_method = sits_method)
+  
+  prediction_fct <- samples_tb %>% 
+    dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
+    sits::sits_classify(ml_model = classification_model) %>% 
+    dplyr::pull(predicted) %>% 
+    purrr::map_chr(magrittr::extract("class")) %>%
+    factor(levels = reference_labels)
+  
+  reference_fct <- samples_tb %>%
+    dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
+    pull(label) %>% 
+    factor(levels = reference_labels)
+  
+  caret::confusionMatrix(data = prediction_fct,
+                         reference = reference_fct) %>%
+    get_acc() %>% 
+    dplyr::mutate(n_samples = nrow(training_samples)) %>% 
+    return()
+}
+
+```
+
+
+
+## Test Active Learning using only known samples.
+
+```{r util_experiment, echo=FALSE}
+
+experiment <- function(x, labelled_samples, n_samples){
+ 
+  
+   
+  #---- Test without active learning ----
+  
+  training_samples <- labelled_samples
+  
+  for (i in 1:n_iterations) {
+    
+    new_samples <- samples_tb %>% 
+      dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
+      dplyr::sample_n(size = n_samples)
+    
+    training_samples <- training_samples %>%
+      dplyr::bind_rows(new_samples) %>%
+      magrittr::set_class(class(sits::cerrado_2classes))
+     
+    acc_iter <- run_iteration(training_samples, 
+                              samples_tb,
+                              sits_method,
+                              reference_labels) %>% 
+      dplyr::mutate(type = "Without AL",
+                    iteration = i)
+    
+    accuracy_tb <- accuracy_tb %>%
+      dplyr::bind_rows(acc_iter)
+  } 
+ 
+   
+  
+  #---- Test using AL random sampling ----
+   
+  training_samples <- labelled_samples %>% 
+      magrittr::set_class(class(sits::cerrado_2classes))
+  
+  for (i in 1:n_iterations) {
+    
+    unlabelled_tb <- samples_tb %>% 
+      dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+      dplyr::mutate(label = NA)
+  
+    # use AL random sampling to choose the samples to be sent to the oracle. 
+    oracle_samples <- training_samples %>%
+      dplyr::bind_rows(unlabelled_tb) %>% 
+      al_random_sampling(sits_method = sits_method,
+                         multicores = 1) %>% 
+      dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
+      dplyr::arrange(dplyr::desc(entropy)) %>%
+      dplyr::slice_head(n = n_samples) %>% 
+      dplyr::select(-entropy, -least_conf, -margin_conf, 
+                    -ratio_conf, -new_label)
+    
+    # Get the true labels from the oracle
+    oracle_samples <- oracle_samples %>%
+      dplyr::left_join(
+        y = samples_tb %>% 
+          dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
+          select(true_label = label, 
+                 sample_id),
+        by = "sample_id") %>% 
+      dplyr::mutate(label = true_label) %>% 
+      dplyr::select(-true_label)
+                    
+    # Add the oracle samples to the training set.
+    training_samples <- training_samples %>%
+      dplyr::bind_rows(oracle_samples) %>%
+      magrittr::set_class(class(sits::cerrado_2classes))
+    
+    # Do the classification and estimate the accuracy.
+    acc_iter <- run_iteration(training_samples, 
+                              samples_tb,
+                              sits_method,
+                              reference_labels) %>% 
+      dplyr::mutate(type = "AL Random Sampling",
+                    iteration = i)
+    
+    accuracy_tb <- accuracy_tb %>%
+      dplyr::bind_rows(acc_iter)
+  }
+ 
+   
+  
+  #---- Test using EGAL ----
+  
+  training_samples <- labelled_samples
+  
+  for (i in 1:n_iterations) {
+
+    unlabelled_tb <- samples_tb %>% 
+      dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+      dplyr::mutate(label = NA)
+  
+    # Use AL EGAL to choose the samples to be sent to the oracle. 
+    oracle_samples <- training_samples %>%
+      dplyr::bind_rows(unlabelled_tb) %>% 
+      al_egal() %>% 
+      dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
+      dplyr::arrange(dplyr::desc(egal)) %>%
+      dplyr::slice_head(n = n_samples) %>% 
+      dplyr::select(-egal)
+    
+    # Get the true labels from the oracle
+    oracle_samples <- oracle_samples %>%
+      dplyr::left_join(
+        y = samples_tb %>% 
+          dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
+          select(true_label = label, 
+                 sample_id),
+        by = "sample_id") %>% 
+      dplyr::mutate(label = true_label) %>% 
+      dplyr::select(-true_label)
+                    
+    # Add the oracle samples to the training set.
+    training_samples <- training_samples %>%
+      dplyr::bind_rows(oracle_samples) %>%
+      magrittr::set_class(class(sits::cerrado_2classes))
+    
+    # Do the classification and estimate the accuracy.
+    acc_iter <- run_iteration(training_samples, 
+                              samples_tb,
+                              sits_method,
+                              reference_labels) %>% 
+      dplyr::mutate(type = "AL EGAL",
+                    iteration = i)
+    
+    accuracy_tb <- accuracy_tb %>%
+      dplyr::bind_rows(acc_iter)
+  }
+ 
+  accuracy_tb %>% 
+    dplyr::mutate(experiment = x) %>% 
+    return()
+}
+
+```
+
+
+
+```{r egal_samples, echo=FALSE, fig.width=7, fig.height=4}
+
+accuracy_lst <- parallel::mclapply(1:n_experiments,
+                                   experiment, 
+                                   labelled_samples = labelled_samples, 
+                                   n_samples = n_samples,
+                                   mc.cores = 1)
+
+saveRDS(accuracy_lst,
+        file = "accuracy_lst.rds")
+
+
+
+#---- Plot results ---- 
+
+accuracy_lst %>% 
+  dplyr::bind_rows() %>% 
+  dplyr::filter(metric == "f1") %>%
+  ggplot2::ggplot() + 
+  ggplot2::geom_boxplot(ggplot2::aes(x = n_samples,
+                                     y = accuracy,
+                                     group = n_samples)) +
+  ggplot2::facet_grid(cols = dplyr::vars(type),
+                      rows = dplyr::vars(class)) +
+  ggplot2::labs(title = "Active learning accuracy",
+                subtitle = paste("Amazonia samples",
+                                 paste(n_experiments, " runs"),
+                                 sep = " - ")) +
+  ggplot2::xlab("Number of samples") + 
+  ggplot2::ylab("F1 score")
+
+ggplot2::ggsave(filename = "./comparison_deforestation.png",
+                width = 297,
+                height = 210,
+                units = "mm")
+
+```

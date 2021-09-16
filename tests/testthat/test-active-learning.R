@@ -41,31 +41,3 @@ test_that("Generate samples for active learning using random selection", {
     expect_true(all(new_samples[["label"]] %in% samples_tb[["label"]]))
 })
 
-test_that("Generate samples for active learning using EGAL algorithm", {
-
-    samples_tb <- sits::sits_select(sits::samples_modis_4bands, bands = "EVI")
-    set.seed(234)
-
-    data_cube <- sits::sits_cube(
-        source = "LOCAL",
-        name = "sinop-2014",
-        satellite = "TERRA",
-        sensor = "MODIS",
-        data_dir = system.file("extdata/raster/mod13q1", package = "sits"),
-        delim = "_",
-        parse_info = c("X1", "X2", "tile", "band", "date")
-    )
-
-    new_samples <- sits_al_egal(samples_tb, data_cube,
-                                n_samples = 100,
-                                multicores = 1)
-
-    expect_true(sits:::.sits_test_tibble(new_samples))
-    expect_true(inherits(new_samples, "sits"))
-    expect_true("egal" %in% colnames(new_samples))
-
-    # sf::st_sample doesn't guarantee the number of samples returned match the
-    # number of samples requested. Besides, some random samples cloud fall in
-    # data cube's areas with no data.
-    expect_true(nrow(new_samples) > 0)
-})

@@ -19,16 +19,18 @@ knitr::opts_chunk$set(
 )
 
 library(activelearning)
-library(sits)
 library(caret)
 library(dplyr)
 library(ensurer)
 library(magrittr)
+library(sits)
 library(terra)
 
 n_samples <- 20
-n_iterations <- 20
+n_iterations <- 5
 n_multicores <- parallel::detectCores() / 2
+
+sits_method <- sits::sits_xgboost(verbose = FALSE)
 
 ```
 
@@ -79,12 +81,40 @@ count_ts_na <- function(x){
   sum(is.na(x))
 }
 
+
+#' Get the labels for the oracle samples.
+#'
+#' @param oracle_samples A tibble.
+#' @param ref_raster     A classified terra raster.
+#' @param ref_labels     The labels used during the classification of the
+#'                       raster of reference.
+#' @return               A tibble. The oracle samples with updated labels.
+get_oracle_labels <- function(oracle_samples, ref_raster, 
+                              ref_labels) {
+  
+  oracle_sf <-  sf::st_as_sf(oracle_samples,
+                             coords = c("longitude", "latitude"),
+                             crs = 4326) %>%
+    sf::st_transform(crs = terra::crs(ref_raster))
+  
+  oracle_labels <- terra::extract(ref_raster, 
+                                  terra::vect(oracle_sf)) %>%
+    dplyr::pull(lyr1) %>%
+    dplyr::recode(!!!ref_labels)
+  
+  # Update the labels using data from the oracle.
+  oracle_samples <- oracle_samples %>% 
+    dplyr::mutate(label = oracle_labels)
+  
+  return(oracle_samples)
+}
+
 ```
 
 
 
 Active Learning improves the results of a classification by feeding the classifier with informative samples. 
-
+      
 Active Learning selects unlabeled samples from a data set using query strategies designed to take advantage of the labeled samples in the data set and also the   properties of the classifier. 
 Active Learning can be understood as a set made of a classifier (*C*), a set of samples both labeled (*L*) and unlabeled (*U*), a heuristic (*Q*), and a user (*S*). The user *S* assigns labels to the samples in *U* using *Q* as criterion, while the classifier *C* uses the samples in *L* to produce a classification model [@Crawford2013].
 
@@ -105,33 +135,30 @@ This classification uses an ensemble algorithm (extreme gradient boosting XGBoos
 
 #---- Do a full classification and use it as ground truth ----
 
-classification_interval <- c(as.Date("2013-09-14"),
-                             as.Date("2014-08-29"))
-
 samples_tb <- sits::samples_modis_4bands %>%
-    sits::sits_select(bands = c("NDVI", "EVI")) %>%
-    # Test for NA in the time series.
-    dplyr::mutate(n_na = purrr::map_int(time_series, count_ts_na)) %>%
-    ensurer::ensure_that(all(.$n_na == 0),
-                         err_desc = "NAs found!") %>%
-    dplyr::select(-n_na)
+    sits::sits_select(bands = c("NDVI", "EVI"))
 
-data_cube <- sits::sits_cube(
+classification_interval <- samples_tb %>% 
+  sits::sits_timeline() %>% 
+  range()
+
+modis_cube <- sits::sits_cube(
     source = "LOCAL",
     name = "sinop-2014",
     satellite = "TERRA",
     sensor = "MODIS",
-    data_dir = system.file("extdata/raster/mod13q1", package = "sits"),
+    data_dir = system.file("extdata/raster/mod13q1", 
+                           package = "sits"),
     delim = "_",
     parse_info = c("X1", "X2", "tile", "band", "date"),
     start_date = dplyr::first(classification_interval),
     end_date   = dplyr::last(classification_interval)
 )
 
-sits_method <- sits::sits_xgboost(verbose = FALSE)
-#sits_method <- sits::sits_rfor(num_trees = 1000)
-sits_model  <- sits::sits_train(samples_tb, ml_method = sits_method)
-probs_cube  <- sits::sits_classify(data_cube,
+sits_model  <- sits::sits_train(data = samples_tb, 
+                                ml_method = sits_method)
+
+probs_cube  <- sits::sits_classify(data = modis_cube,
                                    ml_model = sits_model,
                                    output_dir = tempdir(),
                                    memsize = 4,
@@ -140,15 +167,29 @@ probs_cube  <- sits::sits_classify(data_cube,
 label_cube <- sits::sits_label_classification(probs_cube,
                                               output_dir = tempdir())
 
-ref_labels <- environment((sits_model))[["labels"]]
-names(ref_labels) <- as.character(1:length(ref_labels))
+# Labels used during the classification.
+reference_labels <- sits_model %>% 
+  environment() %>% 
+  magrittr::extract2("labels") %>% 
+  magrittr::set_names(1:length(.))
 
 # Get a raster with the ground truth.
-ref_rast <- rast(label_cube[["file_info"]][[1]][["path"]])
+reference_raster <- label_cube %>% 
+  magrittr::extract2("file_info") %>% 
+  magrittr::extract2(1) %>% 
+  magrittr::extract2("path") %>% 
+  terra::rast()
 
-plot(label_cube, title = "Ground truth")
+plot(label_cube, 
+     title = "Ground truth")
 
 ```
+
+
+
+## Random classification 
+
+TODO: Add a classification using only randomly selected points.
 
 
 
@@ -168,85 +209,89 @@ Note that Active Learning using EGAL is independent of the classifier (unlike ra
 
 
 
-```{r egal, echo=FALSE, fig.width=7, fig.height=4}
+#### Example 1
 
-al_samples_tb <- samples_tb %>%
+
+```{r egal_raster_1, echo=FALSE, fig.width=7, fig.height=4}
+
+# Let's suppose we have only 5 samples of each label to start the 
+# classification.
+train_samples <- samples_tb %>%
     dplyr::group_by(label) %>%
     dplyr::sample_n(5) %>%
     dplyr::ungroup() %>%
     magrittr::set_class(class(sits::samples_modis_4bands))
 
-oracle_samples <- tibble::tibble()
+accuracy_egal <- tibble::tibble()
+
 for (i in 1:n_iterations) {
+
+  # Let's take 400 random points in the area.
+  random_points <- 
+    dplyr::bind_rows(al_get_random_points(data_cube = modis_cube,
+                                          n_samples = 400,
+                                          multicores = n_multicores))
   
-  # Get new samples from the pool of samples.
-  suppressMessages(
-    egal_samples <- al_samples_tb %>%
-      # NOTE: If I comment the next line (i.e. only using al_samples_tb) in all 
-      #       iterations increases the accuracy!
-      dplyr::bind_rows(oracle_samples) %>%
-      sits_al_egal(data_cube,
-                   multicores = n_multicores) %>% 
-      dplyr::arrange(dplyr::desc(egal)) %>% 
-      dplyr::slice(1:n_samples) %>%
-      dplyr::select(-egal)
-  ) 
+  # Now let's rank the random points and choose those with higher EGAL. These 
+  # points will be sent to the oracle for labelling.
+  oracle_samples <- train_samples %>%
+    dplyr::bind_rows(random_points) %>% 
+    al_egal() %>% 
+    dplyr::filter(!is.na(egal)) %>% 
+    dplyr::arrange(dplyr::desc(egal)) %>% 
+    dplyr::slice(1:n_samples) %>%
+    dplyr::select(-egal)
   
-  oracle_samples <- oracle_samples %>% 
-    dplyr::bind_rows(egal_samples)
+  # NOTE: Here we should go to the oracle. Instead, we're getting labels from
+  # the reference raster.
+  oracle_samples <- oracle_samples %>%
+    get_oracle_labels(ref_raster = reference_raster,
+                      ref_labels = reference_labels)
+  
+  # Now we join the oracle samples to the training samples. 
+  train_samples <- train_samples %>%
+    dplyr::bind_rows(oracle_samples)
+  
+  # We're ready to run a classification!
+  
+  out_dir <- file.path(tempdir(), paste0("iter_egal_", i))
+  dir.create(out_dir)
+  
+  egal_model  <- sits::sits_train(train_samples,
+                                  ml_method = sits_method)
+  
+  egal_probs_cube <- sits::sits_classify(modis_cube,
+                                         ml_model = egal_model,
+                                         output_dir = out_dir,
+                                         memsize = 4,
+                                         multicores = n_multicores)
+  
+  egal_label_cube <- sits::sits_label_classification(egal_probs_cube,
+                                                     output_dir = out_dir)
+  
+  prediction_raster <- egal_label_cube %>% 
+    magrittr::extract2("file_info") %>% 
+    magrittr::extract2(1) %>% 
+    magrittr::extract2("path") %>%
+    terra::rast()
+  
+  # Compute the classification's accuracy.
+  accuracy_row <- compute_accuracy(ref_rast = reference_raster,
+                                   pred_rast = prediction_raster,
+                                   ref_labels = reference_labels) %>% 
+    data.frame() %>%
+    t() %>%
+    as_tibble() %>% 
+    mutate(n_samples = nrow(train_samples))
+  
+  accuracy_egal <- accuracy_egal %>% 
+    dplyr::bind_rows(accuracy_row)
 }
 
-# NOTE: Here we should go to the oracle. Instead, we're getting labels from
-#       the reference raster.
-oracle_sf <-  sf::st_as_sf(oracle_samples,
-                           coords = c("longitude", "latitude"),
-                           crs = 4326) %>%
-  sf::st_transform(crs = crs(ref_rast))
-oracle_labels <- terra::extract(ref_rast, terra::vect(oracle_sf)) %>%
-  pull(lyr1) %>%
-  recode(!!!ref_labels)
+knitr::kable(accuracy_egal %>% dplyr::select(n_samples, dplyr::everything()), 
+             digits = 2)
 
-# Update the labels using data from the oracle.
-oracle_samples[["label"]] <- oracle_labels
-
-# Merge the new samples to the sample data set.
-al_samples_tb <- al_samples_tb %>%
-  dplyr::bind_rows(oracle_samples)
-
-# NOTE: Since the cube's extent is small, we can run a classification of the
-#       whole area to estimate its accuracy. A more realistic scenario would
-#       use sample points.
-out_dir <- file.path(tempdir(), paste0("iter_egal_", i))
-dir.create(out_dir)
-
-al_sits_model  <- sits::sits_train(al_samples_tb,
-                                   ml_method = sits_method)
-al_probs_cube <- sits::sits_classify(data_cube,
-                                     ml_model = al_sits_model,
-                                     output_dir = out_dir,
-                                     memsize = 4,
-                                     multicores = n_multicores)
-al_label_cube <- sits::sits_label_classification(al_probs_cube,
-                                                 output_dir = out_dir)
-    
-# Compute classification's accuracy.
-accuracy_vec <- compute_accuracy(
-  ref_rast = ref_rast,
-  pred_rast = rast(al_label_cube$file_info[[1]][["path"]]),
-  ref_labels = ref_labels
-)
-
-accuracy_vec <- c(n_samples = nrow(al_samples_tb), accuracy_vec)
-
-results_egal <- accuracy_vec %>%
-  data.frame() %>%
-  t() %>%
-  magrittr::set_colnames(names(accuracy_vec)) %>%
-  as_tibble()
-
-knitr::kable(results_egal, digits = 2)
-
-plot(al_label_cube, title = "EGAL")
+plot(egal_label_cube, title = "EGAL")
 
 ```
 

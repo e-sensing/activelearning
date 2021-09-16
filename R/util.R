@@ -1,67 +1,110 @@
-#' @title Get a sits tibble of random points in the given data cube.
+#' @title Check the time series in a sits tibble.
 #'
-#' @name .sits_get_random_points
+#' @name .al_check_time_series
 #'
 #' @keywords internal
 #'
 #' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
 #'
-#' @description Get a sits tibble of random points in the given data cube.
+#' @description This function returns TRUE of the time series in the given sits
+#' tibble are valid; otherwise it throws an error.
 #'
-#' @param data_cube  A sits data cube.
-#' @param n_samples  The number of random points to take. The returned
-#'                   sample size may be less than the requested size.
-#' @param multicores The number of cores available for active learning.
+#' @param s_labelled_tb   A sits tibble.
+#' @return                TRUE or it throws an error.
 #'
-#' @return           A sits tibble of samples, including their time series.
+.al_check_time_series <- function(sits_tb) {
+
+    res <- TRUE
+
+    if (any(.al_count_row(sits_tb) == 0)) {
+        warning("Some samples have 0 time steps!")
+        res <- FALSE
+    }
+
+    if (length(unique(.al_count_row(sits_tb))) != 1) {
+        warning("The number of time steps don't match among the samples!")
+        res <- FALSE
+    }
+
+    if (any(.al_count_col(sits_tb) < 2)) {
+        warning("Some samples are missing variables!")
+        res <- FALSE
+    }
+
+    if (any(.al_count_na(sits_tb) != 0)) {
+        warning("NAs found in some time series!")
+        res <- FALSE
+    }
+
+    if (!res)
+        stop("Invalid time series!")
+
+    return(res)
+}
+
+
+
+#' @title Count the number of columns in the time series of a sits tibble.
 #'
-.sits_get_random_points <- function(data_cube, n_samples, multicores){
+#' @name .al_count_col
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description Count the number of columns in the time series of each
+#' observation in the given sits tibble.
+#'
+#' @param sits_tb A sits tibble.
+#' @return        An integer.
+#'
+.al_count_col <- function(sits_tb) {
+    vapply(sits_tb[["time_series"]],
+           FUN = ncol,
+           integer(1))
+}
 
-    # Get the extent of the data cube.
-    xmin <- data_cube[["xmin"]]
-    xmax <- data_cube[["xmax"]]
-    ymin <- data_cube[["ymin"]]
-    ymax <- data_cube[["ymax"]]
-    pol <- sf::st_sfc(sf::st_polygon(list(rbind(c(xmin, ymin), c(xmax, ymin),
-                                                c(xmax, ymax), c(xmin, ymax),
-                                                c(xmin, ymin)))))
-    sf::st_crs(pol) <- data_cube[["crs"]]
 
-    # Get n_samples random points (plus a margin) in the data_cube's extent.
-    # NOTE: the extra points would help if case st_sample returns less points or
-    # if some of them have empty time series.
-    points_tb <- sf::st_sf(sf::st_sample(pol,
-                                         size = n_samples,
-                                         type = "random"))
-    points_tb <- sf::st_transform(points_tb,
-                                  crs = 4326)
-    points_tb <- cbind(points_tb, sf::st_coordinates(points_tb))
-    colnames(points_tb) <- c("longitude", "latitude", "geometry")
-    sf::st_geometry(points_tb) <- "geometry"
-    points_tb <- sf::st_set_geometry(points_tb, NULL)
-    time_line <- sits::sits_timeline(data_cube)
-    points_tb["start_date"]  <- time_line[1]
-    points_tb["end_date"]    <- time_line[length(time_line)]
-    points_tb["label"]       <- "NoClass"
-    points_tb["cube"]        <- NA
-    points_tb["time_series"] <- NA
-    points_tb["id"] <- seq_len(nrow(points_tb))
-    class(points_tb) <- c(class(points_tb), "sits")
 
-    # Get the points' time series.
-    tmp_file <- tempfile(pattern = "points_",
-                         fileext = ".csv")
-    utils::write.csv(points_tb, file = tmp_file, row.names = FALSE)
-    points_tb <- sits::sits_get_data(cube = data_cube,
-                               file = tmp_file,
-                               multicores = multicores)
+#' @title Count the number of NAs in the time series of a sits tibble.
+#'
+#' @name .al_count_na
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description Count the number of NAs in the time series of each observation
+#' in a sits tibble.
+#'
+#' @param sits_tb A sits tibble.
+#' @return        An integer.
+#'
+.al_count_na <- function(sits_tb) {
+    vapply(sits_tb[["time_series"]],
+           FUN = function(x){sum(is.na(x))},
+           integer(1))
+}
 
-    # Remove samples with NAs in their time series.
-    points_tb[["have_na"]] <- vapply(points_tb[["time_series"]], function(x){
-        any(is.na(x))
-    }, logical(1))
-    points_tb <- points_tb[points_tb[["have_na"]] == FALSE, ]
-    points_tb[["have_na"]] <- NULL
 
-    return(points_tb)
+
+#' @title Count the number of rows in the time series of each observation in a
+#' sits tibble.
+#'
+#' @name .al_count_row
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description Count the number of rows in the time series of each observation
+#' in a the given sits tibble.
+#'
+#' @param sits_tb A sits tibble.
+#' @return        An integer.
+#'
+.al_count_row <- function(sits_tb) {
+    vapply(sits_tb[["time_series"]],
+           FUN = nrow,
+           integer(1))
 }

@@ -1,0 +1,58 @@
+---
+title: "s2"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{s2}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+
+library(activelearning)
+library(dplyr)
+library(sits)
+library(igraph)
+
+```
+
+
+
+```{r}
+
+# samples_tb <- system.file("extdata/samples.rds",
+#                           package = "activelearning") %>%
+#   readRDS() %>%
+#   dplyr::mutate(sample_id = 1:nrow(.))
+# 
+# n_labelled <- 5
+# 
+# s_labelled_tb <- samples_tb %>%
+#   dplyr::group_by(label) %>% 
+#   dplyr::sample_n(size = n_labelled) %>%
+#   dplyr::ungroup()
+# 
+# s_unlabelled_tb <- samples_tb %>%
+#   dplyr::filter(!(sample_id %in% s_labelled_tb$sample_id)) %>% 
+#   dplyr::mutate(label = NA)
+# 
+# sim_method = "Euclidean"
+# budget = 2000
+# 
+# # Number of edges to keep in the graph.
+# # It is the n closest neighbors.
+# keep_n = 50 
+# keep_n = 25 
+# keep_n = 10
+
+```
+
