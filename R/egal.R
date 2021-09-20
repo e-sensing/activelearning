@@ -49,7 +49,7 @@ al_egal <- function(samples_tb,
                     beta = alpha,
                     w = 0.5) {
 
-    sits:::.sits_test_tibble(samples_tb)
+    sits:::.sits_tibble_test(samples_tb)
 
     .al_check_time_series(samples_tb)
 
@@ -82,7 +82,7 @@ al_egal <- function(samples_tb,
         dplyr::mutate(egal = NA) %>%
         dplyr::bind_rows(egal_tb)
 
-    sits:::.sits_test_tibble(egal_tb)
+    sits:::.sits_tibble_test(egal_tb)
 
     return(egal_tb)
 }

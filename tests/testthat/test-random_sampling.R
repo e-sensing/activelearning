@@ -23,19 +23,6 @@ test_that("Test expected usage", {
         sits::sits_timeline() %>%
         range()
 
-    modis_cube <- sits::sits_cube(
-        source = "LOCAL",
-        name = "sinop-2014",
-        satellite = "TERRA",
-        sensor = "MODIS",
-        data_dir = system.file("extdata/raster/mod13q1",
-                               package = "sits"),
-        delim = "_",
-        parse_info = c("X1", "X2", "tile", "band", "date"),
-        start_date = dplyr::first(classification_interval),
-        end_date   = dplyr::last(classification_interval)
-    )
-
     xgb_method <- sits::sits_xgboost(verbose = FALSE)
 
     labelled_tb <- samples_tb %>%
@@ -54,15 +41,13 @@ test_that("Test expected usage", {
         dplyr::bind_rows(unlabelled_tb) %>%
         dplyr::select(-sample_id) %>%
         magrittr::set_class(class(samples_tb)) %>%
-        al_random_sampling(sits_method = xgb_method,
-                           data_cube = modis_cube,
-                           n_samples = 400)
+        al_random_sampling(sits_method = xgb_method)
 
     rs_vec <- rs_tb %>%
         dplyr::pull(entropy)
 
     # The result is a valid sits' tibble.
-    expect_true(sits:::.sits_test_tibble(rs_tb))
+    expect_true(sits:::.sits_tibble_test(rs_tb))
 
     # The input's rows have to match the output's.
     expect_true(nrow(rs_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
@@ -76,4 +61,24 @@ test_that("Test expected usage", {
 
     # The egal metric is positive (TODO: Check paper)
     expect_true(all(rs_vec[!is.na(rs_vec)] > 0))
+
+
+    #expect_true(sits:::.sits_tibble_test(new_samples))
+    #expect_true(inherits(new_samples, "sits"))
+    #expect_true(nrow(new_samples) == 100)
+    #expect_true(all(c("entropy", "least_conf",
+    #                  "margin_conf", "ratio_conf") %in% colnames(new_samples)))
+
+    #expect_true(is.double(new_samples[["entropy"]]))
+    #expect_true(is.double(new_samples[["least_conf"]]))
+    #expect_true(is.double(new_samples[["margin_conf"]]))
+    #expect_true(is.double(new_samples[["ratio_conf"]]))
+    #expect_true(all(new_samples[["entropy"]][!is.na(new_samples[["entropy"]])] > 0))
+    #expect_true(all(new_samples[["least_conf"]]  > 0))
+    #expect_true(all(new_samples[["margin_conf"]] > 0))
+    #expect_true(all(new_samples[["ratio_conf"]]  > 0))
+    # expect_true(all(dplyr::between(new_samples[["least_conf"]], 0, 1)))
+    # expect_true(all(dplyr::between(new_samples[["margin_conf"]], 0, 1)))
+
+    # expect_true(all(new_samples[["label"]] %in% samples_tb[["label"]]))
 })

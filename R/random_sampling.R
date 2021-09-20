@@ -11,8 +11,8 @@
 #' it computes some metrics on the results. These metrics are useful for
 #' selecting the samples to be sent to an expert (oracle) for labeling.
 #'
-#' This function receives a sits tibble and it returns it with metrics. However,
-#' this function doesn't guarantee the order of the returned samples.
+#' This function receives a sits tibble and it returns it with metrics.
+#' However, this function doesn't guarantee the order of the returned samples.
 #'
 #' @param samples_tb  A sits tibble.
 #' @param sits_method A sits model specification.
@@ -31,7 +31,7 @@ al_random_sampling <- function(samples_tb,
                                sits_method,
                                multicores = 1){
 
-    sits:::.sits_test_tibble(samples_tb)
+    sits:::.sits_tibble_test(samples_tb)
 
     .al_check_time_series(samples_tb)
 
@@ -70,7 +70,7 @@ al_random_sampling <- function(samples_tb,
                       new_label   = NA) %>%
         dplyr::bind_rows(rs_tb)
 
-    sits:::.sits_test_tibble(points_tb)
+    sits:::.sits_tibble_test(points_tb)
 
     return(points_tb)
 }
