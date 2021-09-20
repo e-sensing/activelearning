@@ -1,0 +1,269 @@
+---
+title: "Active learning using random sampling"
+output: rmarkdown::html_vignette
+bibliography: references.bib  
+vignette: >
+  %\VignetteIndexEntry{random_sampling}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+library(activelearning)
+library(sits)
+library(caret)
+library(dplyr)
+library(ensurer)
+library(magrittr)
+library(terra)
+
+n_samples <- 20
+n_iterations <- 20
+n_multicores <- parallel::detectCores() / 2
+
+```
+
+
+
+```{r util, include=FALSE}
+
+#' Compute accuracy by comparing a reference to a prediction raster.
+#'
+#' @param ref_rast   A terra's raster of reference.
+#' @param pred_rast  A terra's raster with predictions.
+#' @param ref_labels A named character. The names of the labels in ref_rast.
+#' @return           A named numeric character. The overall, producer and user
+#'                   accuracy.
+compute_accuracy <- function(ref_rast, pred_rast, ref_labels) {
+
+    reference_vec  <- dplyr::recode(ref_rast[],  !!!ref_labels)
+    prediction_vec <- dplyr::recode(pred_rast[], !!!ref_labels)
+
+    conf_mat <- caret::confusionMatrix(data = factor(prediction_vec,
+                                                     levels = ref_labels),
+                                       reference = factor(reference_vec,
+                                                          levels = ref_labels))
+    cf_mat <- as.matrix(conf_mat[["table"]])
+    overall_accuracy  <- conf_mat$overall["Accuracy"]
+    
+    by_class <- conf_mat[["byClass"]]
+    f1_score <- by_class[, "F1"]
+    prod_acc <- by_class[, "Pos Pred Value"]
+    user_acc <- by_class[, "Sensitivity"]
+    class_names <- stringr::str_sub(rownames(by_class), 8)
+    names(f1_score) <- paste0(class_names, "_f1") 
+    names(prod_acc) <- paste0(class_names, "_pa")
+    names(user_acc) <- paste0(class_names, "_ua")
+
+    pua <- c(f1_score, prod_acc, user_acc)
+    pua <- pua[match(sort(names(pua)), names(pua))]
+
+    return(c(overall_accuracy, pua))
+}
+
+#' Count the number of NAs in a tibble.
+#'
+#' @param x A tibble.
+#' @return  An integer.
+#'                   accuracy.
+count_ts_na <- function(x){
+  sum(is.na(x))
+}
+
+```
+
+
+
+Active Learning improves the results of a classification by feeding the classifier with informative samples. 
+
+Active Learning selects unlabeled samples from a data set using query strategies designed to take advantage of the labeled samples in the data set and also the   properties of the classifier. 
+Active Learning can be understood as a set made of a classifier (*C*), a set of samples both labeled (*L*) and unlabeled (*U*), a heuristic (*Q*), and a user (*S*). The user *S* assigns labels to the samples in *U* using *Q* as criterion, while the classifier *C* uses the samples in *L* to produce a classification model [@Crawford2013].
+
+
+
+## Reference classification {#reference_classification}
+
+To establish a base-line for comparing different Active Learning heuristics, we prepared a classification using the data available in the package sits [@Simoes2021]. 
+
+We are using sits' local cube MODIS TERRA collection 6 that covers Sinop, a Brazilian town in the state of Mato Grosso for the crop-year 2014(2013/09/14 - 2014/08/29).  
+The samples used for training a classification model also come from the sits package. The sits tibble containing the samples is called *samples_modis_4bands* and includes 1218 samples.
+
+This classification uses an ensemble algorithm (extreme gradient boosting XGBoost [@Chen2015]) and the vegetation indexes EVI and NDVI. Its results are shown below.
+
+
+
+
+```{r base_classification, echo=FALSE, fig.width=7, fig.height=4}
+
+#---- Do a full classification and use it as ground truth ----
+
+samples_tb <- sits::samples_modis_4bands %>%
+    sits::sits_select(bands = c("NDVI", "EVI")) %>%
+    # Test for NA in the time series.
+    dplyr::mutate(n_na = purrr::map_int(time_series, count_ts_na)) %>%
+    ensurer::ensure_that(all(.$n_na == 0),
+                         err_desc = "NAs found!") %>%
+    dplyr::select(-n_na)
+
+classification_interval <- samples_tb %>% 
+  sits::sits_timeline() %>% 
+  range()
+
+modis_cube <- sits::sits_cube(
+  source = "LOCAL",
+  name = "sinop-2014",
+  satellite = "TERRA",
+  sensor = "MODIS",
+  data_dir = system.file("extdata/raster/mod13q1", package = "sits"),
+  delim = "_",
+  parse_info = c("X1", "X2", "tile", "band", "date"),
+  start_date = dplyr::first(classification_interval),
+  end_date   = dplyr::last(classification_interval)
+)
+
+sits_method <- sits::sits_xgboost(verbose = FALSE)
+
+sits_model  <- sits::sits_train(data = samples_tb, 
+                                ml_method = sits_method)
+
+probs_cube  <- sits::sits_classify(data = modis_cube,
+                                   ml_model = sits_model,
+                                   output_dir = tempdir(),
+                                   memsize = 4,
+                                   multicores = 1)
+
+label_cube <- sits::sits_label_classification(probs_cube,
+                                              output_dir = tempdir())
+
+# Labels used during the classification.
+reference_labels <- sits_model %>% 
+  environment() %>% 
+  magrittr::extract2("labels") %>% 
+  magrittr::set_names(1:length(.))
+
+# Get a raster with the ground truth.
+reference_raster <- label_cube %>% 
+  magrittr::extract2("file_info") %>% 
+  magrittr::extract2(1) %>% 
+  magrittr::extract2("path") %>% 
+  terra::rast()
+
+plot(label_cube, 
+     title = "Ground truth")
+
+```
+
+
+## Random classification 
+
+TODO: Add a classification using only randomly selected points.
+
+
+## Classification using Active Learning
+
+In this section, we test some Active Learning heuristics. To achieve this, we  compare pixel by pixel the classification results using Active Learning to those of the [reference classification](#reference_classification). 
+Each AL classification includes a Figure showing the change in accuracy (overall, producer and user) as a function of the number of samples.
+
+
+
+### Random Sampling
+
+Random sampling is one heuristic for Active Learning. It consists on building a classification model using the training samples already available and then use it to classify a set of points randomly selected. These points are ranked using a metric computed using the pixels probability of belonging to each label. In this example, we used *Information Entropy* but *Least Confidence*, *Margin of Confidence*, and *Ratio of Confidence* are also available.
+
+Finally, the best ranked points are sent to a human expert (the *oracle*) for labeling and then are merged into the training data set and the process start over again.
+
+Active Learning by means of Random sampling is independent of the classifier.
+
+
+```{r random_sampling, echo=FALSE, fig.width=7, fig.height=4}
+
+# First set of samples for starting Active Learning.
+train_samples <- samples_tb %>%
+    dplyr::group_by(label) %>%
+    dplyr::sample_n(5) %>%
+    dplyr::ungroup() %>%
+    magrittr::set_class(class(sits::samples_modis_4bands))
+
+accuracy_rs <- tibble::tibble()
+
+for (i in 1:n_iterations) {
+  
+  # Let's take 400 random points in the area.
+  random_points <- 
+    dplyr::bind_rows(al_get_random_points(data_cube = modis_cube,
+                                          n_samples = 400,
+                                          multicores = n_multicores))
+  
+  # Now let's rank the random using the metrics; in this case we are using the 
+  # entropy. These  points will be sent to the oracle for labelling.
+  oracle_samples <- train_samples %>%
+    dplyr::bind_rows(random_points) %>% 
+    al_random_sampling(sits_method = sits_method,
+                       data_cube = modis_cube,
+                       multicores = 1) %>% 
+    dplyr::filter(!is.na(entropy)) %>% 
+    dplyr::arrange(dplyr::desc(entropy)) %>% 
+    dplyr::slice(1:n_samples) %>%
+    dplyr::select(-entropy, -least_conf,  -margin_conf, 
+                  -ratio_conf, -new_label)  
+  
+  # Now we join the oracle samples to the training samples. 
+  train_samples <- train_samples %>%
+    dplyr::bind_rows(oracle_samples)
+  
+  
+  # We're ready to run a classification!
+  
+  out_dir <- file.path(tempdir(), paste0("iter_rs_", i))
+  dir.create(out_dir)
+ 
+  rs_model  <- sits::sits_train(train_samples,
+                                ml_method = sits_method)
+  
+  rs_probs_cube <- sits::sits_classify(modis_cube,
+                                       ml_model = rs_model,
+                                       output_dir = out_dir,
+                                       memsize = 4,
+                                       multicores = n_multicores)
+  
+  rs_label_cube <- sits::sits_label_classification(rs_probs_cube,
+                                                   output_dir = out_dir)
+  
+  prediction_raster <- rs_label_cube %>% 
+    magrittr::extract2("file_info") %>% 
+    magrittr::extract2(1) %>% 
+    magrittr::extract2("path") %>%
+    terra::rast()
+  
+  # Compute the classification's accuracy.
+  accuracy_row <- compute_accuracy(ref_rast = reference_raster,
+                                   pred_rast = prediction_raster,
+                                   ref_labels = reference_labels) %>% 
+    data.frame() %>%
+    t() %>%
+    as_tibble() %>% 
+    mutate(n_samples = nrow(train_samples))
+  
+  accuracy_rs <- accuracy_rs %>% 
+    dplyr::bind_rows(accuracy_row)
+}
+
+knitr::kable(accuracy_rs %>% dplyr::select(n_samples, dplyr::everything()), 
+             digits = 2)
+
+plot(rs_label_cube, title = "Active Learning using random sampling")
+
+```
+
+
+
+## References

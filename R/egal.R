@@ -1,14 +1,18 @@
 #' @title Implementation of Exploration Guided Active Learning (EGAL)
 #'
-#' @name sits_al_egal
+#' @name al_egal
 #'
 #' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
 #'
 #' @description Active Learning improves the results of a classification by
-#' feeding the classifier with informative samples. This function returns a sits
-#' tibble of new samples selected at random along with their score in the metric
-#' Exploration Guided Active Learning (EGAL). Samples with a larger EGAL metric
-#' should be submitted first to a human expert for classification.
+#' feeding the classifier with informative samples. The Exploration Guided
+#' Active Learning (EGAL) ranks a set of samples based on their density and
+#' diversity; those samples with a larger EGAL metric should be submitted first
+#' to a human expert (the oracle) for classification.
+#'
+#' This function receives a sits tibble with time series samples and it computes
+#' the EGAL metric on it. However, this function doesn't guarantee the order of
+#' the returned samples.
 #'
 #' @references Hu, R., Jane Delany, S., & Mac Namee, B. (2010). EGAL:
 #' Exploration Guided Active Learning for TCBR. In Lecture Notes in Computer
@@ -16,11 +20,11 @@
 #' Lecture Notes in Bioinformatics): Vol. 6176 LNAI (pp. 156–170). doi:
 #' 10.1007/978-3-642-14274-1_13
 #'
-#' @param samples_tb      A sits tibble.
+#' @param samples_tb      A sits tibble with both labelled and unlabelled
+#'                        samples (i.e. NA).
 #' @param data_cube       A sits data cube.
 #' @param sim_method      A character. A method for computing the similarity
-#'                        among samples as described in the function dist in the
-#'                        package proxy.
+#'                        among samples. See proxy::simil for details.
 #' @param alpha           A double. It controls the radius of the neighborhood
 #'                        used in the estimation of sample density.
 #' @param beta            A double. It controls the radius of the neighborhood
@@ -30,53 +34,64 @@
 #' @param w               A numeric (between 0 and 1) only used when beta is
 #'                        NULL. This proportion parameter balances the influence
 #'                        of diversity and density in the selection strategy.
-#'                        When w is 0, EGAL becomes a pure-diversity
-#'                        and when w is 1, EGAL becomes a pure density-based
-#'                        sampling algorithm.
-#' @param n_samples       The number of random points to take.
-#' @param multicores      The number of cores available for active learning.
+#'                        When w is 0, EGAL becomes a pure-diversity and when w
+#'                        is 1, EGAL becomes a pure density-based sampling
+#'                        algorithm.
 #' @return                A sits tibble with the EGAL metric. This metric
 #'                        ranks samples based on their density and diversity.
 #'                        Those samples with highest EGAL should be selected
 #'                        first for labeling.
 #' @export
 #'
-sits_al_egal <- function(samples_tb,
-                         data_cube,
-                         sim_method = "correlation",
-                         alpha = NULL,
-                         beta = alpha,
-                         w = 0.5,
-                         n_samples = 1000,
-                         multicores = 2) {
+al_egal <- function(samples_tb,
+                    sim_method = "correlation",
+                    alpha = NULL,
+                    beta = alpha,
+                    w = 0.5) {
 
-    sits:::.sits_test_tibble(samples_tb)
+    sits:::.sits_tibble_test(samples_tb)
+
+    .al_check_time_series(samples_tb)
+
+    label_tb <- samples_tb %>%
+        dplyr::filter(nchar(label) > 0,
+                      label != "NoClass")
+
+    no_label_tb <- samples_tb %>%
+        dplyr::filter(is.na(label) | label == "" | label == "NoClass")
 
     assertthat::assert_that(
-        !purrr::is_null(data_cube),
-        msg = "sits_al_egal: please provide data cube"
+        nrow(label_tb) > 0,
+        msg = "al_egal: please provide some labelled samples"
     )
 
-    points_tb <- .sits_get_random_points(data_cube, n_samples, multicores)
+    assertthat::assert_that(
+        nrow(no_label_tb) > 0,
+        msg = "al_egal: please provide some unlabelled samples"
+    )
 
-    points_tb <- .sits_egal(s_labelled_tb = samples_tb,
-                            s_unlabelled_tb = points_tb,
-                            alpha = alpha,
-                            beta = beta,
-                            w = w)
+    egal_tb <- .al_egal(s_labelled_tb = label_tb,
+                        s_unlabelled_tb = no_label_tb,
+                        alpha = alpha,
+                        beta = beta,
+                        w = w)
 
-    # postcondition: We return a valid sits with additional columns.
-    sits:::.sits_test_tibble(points_tb)
+    stopifnot(nrow(no_label_tb) == nrow(egal_tb))
 
-    return(points_tb)
+    egal_tb <- label_tb %>%
+        dplyr::mutate(egal = NA) %>%
+        dplyr::bind_rows(egal_tb)
+
+    sits:::.sits_tibble_test(egal_tb)
+
+    return(egal_tb)
 }
-
 
 
 
 #' @title Implementation of Exploration Guided Active Learning (EGAL)
 #'
-#' @name .sits_egal
+#' @name .al_egal
 #'
 #' @keywords internal
 #'
@@ -89,7 +104,7 @@ sits_al_egal <- function(samples_tb,
 #' @param s_labelled_tb   A sits tibble with labelled samples.
 #' @param s_unlabelled_tb A sits tibble with unlabelled samples.
 #' @param sim_method      A character. A method for computing the similarity
-#'                        among samples as described in the function dist in the
+#'                        among samples as described in the function simil the
 #'                        package proxy.
 #' @param alpha           A double. It controls the radius of the neighborhood
 #'                        used in the estimation of sample density.
@@ -108,12 +123,12 @@ sits_al_egal <- function(samples_tb,
 #'                        Those samples with highest EGAL should be selected
 #'                        first for labeling.
 #'
-.sits_egal <- function(s_labelled_tb,
-                       s_unlabelled_tb,
-                       sim_method = "correlation",
-                       alpha = NULL,
-                       beta = alpha,
-                       w = 0.5) {
+.al_egal <- function(s_labelled_tb,
+                     s_unlabelled_tb,
+                     sim_method = "correlation",
+                     alpha = NULL,
+                     beta = alpha,
+                     w = 0.5) {
     # NOTE:
     # - D is a dataset consisting of:
     # - U pool of unlabeled examples.
@@ -137,8 +152,10 @@ sits_al_egal <- function(samples_tb,
     # Compute alpha
     sim_diag <- similarity_mt
     sim_diag[lower.tri(sim_diag, diag = TRUE)] <- NA
+
     if (any(is.infinite(sim_diag), na.rm = TRUE))
         stop("Duplicated samples found!")
+
     if (is.null(alpha)) {
         alpha <- mean(sim_diag, na.rm = TRUE) - 0.5 * stats::sd(sim_diag,
                                                                 na.rm = TRUE)
@@ -147,13 +164,13 @@ sits_al_egal <- function(samples_tb,
     # Build the candidate set. NOTE: In CS_mat, the rows are the Unlabeled
     # samples and the columns are the Labeled samples.
     CS_mat <- similarity_mt
+
     CS_mat <- CS_mat[(nrow(s_labelled_tb) + 1):nrow(CS_mat),
                      1:nrow(s_labelled_tb)]
 
     # Update beta
-    if (is.null(beta)) {
-        beta = .sits_update_beta(CS_mat, w)
-    }
+    if (is.null(beta))
+        beta = .al_egal_update_beta(CS_mat, w)
 
     cs_vec <- apply(CS_mat, MARGIN = 1, FUN = function(x, beta){
         x[x > beta] <- NA
@@ -174,7 +191,7 @@ sits_al_egal <- function(samples_tb,
 
 #' @title Compute a new value for the beta parameter.
 #'
-#' @name .sits_update_beta
+#' @name .al_egal_update_beta
 #'
 #' @keywords internal
 #'
@@ -189,7 +206,7 @@ sits_al_egal <- function(samples_tb,
 #'
 #' @return      A length-one numeric.
 #'
-.sits_update_beta <- function(S_mat, w){
+.al_egal_update_beta <- function(S_mat, w){
     S <- apply(S_mat, MARGIN = 1, FUN = max)
     threshold <- floor(w * length(S))
     return(sort(S)[[threshold]])
