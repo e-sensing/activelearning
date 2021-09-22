@@ -9,11 +9,12 @@ test_that("Test input samples", {
     # The sample set must contain both labelled and unlabelled samples.
     expect_error(al_egal(samples_tb))
     expect_error(al_egal(all_unlabelled))
+
 })
 
 
 
-test_that("Test expected usage", {
+test_that("Test expected usage: use similarity measure", {
 
     samples_tb <- sits::sits_select(sits::samples_modis_4bands,
                                     bands = "EVI") %>%
@@ -30,8 +31,6 @@ test_that("Test expected usage", {
         dplyr::sample_n(20) %>%
         dplyr::ungroup() %>%
         dplyr::mutate(label = NA)
-
-    #---- Test using a similarity measure ----
 
     egal_tb <- labelled_tb %>%
         dplyr::bind_rows(unlabelled_tb) %>%
@@ -57,8 +56,27 @@ test_that("Test expected usage", {
     # The egal metric is positive (TODO: Check paper)
     expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
 
+})
 
-    #---- Test using a distance measure ----
+
+
+test_that("Test expected usage: distance measure", {
+
+    samples_tb <- sits::sits_select(sits::samples_modis_4bands,
+                                    bands = "EVI") %>%
+        dplyr::mutate(sample_id = 1:nrow(.))
+
+    labelled_tb <- samples_tb %>%
+        dplyr::group_by(label) %>%
+        dplyr::sample_n(20) %>%
+        dplyr::ungroup()
+
+    unlabelled_tb <- samples_tb %>%
+        dplyr::filter(!(sample_id %in% labelled_tb$sample_id)) %>%
+        dplyr::group_by(label) %>%
+        dplyr::sample_n(20) %>%
+        dplyr::ungroup() %>%
+        dplyr::mutate(label = NA)
 
     egal_tb <- labelled_tb %>%
         dplyr::bind_rows(unlabelled_tb) %>%
@@ -74,43 +92,86 @@ test_that("Test expected usage", {
     expect_true(any(is.na(egal_vec)))
     expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
 
+})
 
 
-    #---- Test using DTW ----
+test_that("Test expected usage: dtw", {
 
-    # NOTE: Only runs ifthe package dtw is available.
-    if (proxy::pr_DB$entry_exists("DTW")) {
-        egal_tb <- labelled_tb %>%
-            dplyr::bind_rows(unlabelled_tb) %>%
-            dplyr::select(-sample_id) %>%
-            al_egal(sim_method = "dtw")
+    # NOTE: Only runs if the package dtw is available and registered in
+    # proxy::pr_DB.
+    if (proxy::pr_DB$entry_exists("DTW") == FALSE)
+        skip("DTW distance not found in proxy::pr_DB")
 
-        egal_vec <- egal_tb %>%
-            dplyr::pull(egal)
+    samples_tb <- sits::sits_select(sits::samples_modis_4bands,
+                                    bands = "EVI") %>%
+        dplyr::mutate(sample_id = 1:nrow(.))
 
-        expect_true(sits:::.sits_tibble_test(egal_tb))
-        expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
-        expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
-        expect_true(any(is.na(egal_vec)))
-        expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
-    }
+    labelled_tb <- samples_tb %>%
+        dplyr::group_by(label) %>%
+        dplyr::sample_n(20) %>%
+        dplyr::ungroup()
 
-    # NOTE: Only runs if the package dtwclust is available.
-    if (proxy::pr_DB$entry_exists("DTW_BASIC")) {
-        egal_tb <- labelled_tb %>%
-            dplyr::bind_rows(unlabelled_tb) %>%
-            dplyr::select(-sample_id) %>%
-            al_egal(sim_method = "dtw_basic")
+    unlabelled_tb <- samples_tb %>%
+        dplyr::filter(!(sample_id %in% labelled_tb$sample_id)) %>%
+        dplyr::group_by(label) %>%
+        dplyr::sample_n(20) %>%
+        dplyr::ungroup() %>%
+        dplyr::mutate(label = NA)
 
-        egal_vec <- egal_tb %>%
-            dplyr::pull(egal)
+    egal_tb <- labelled_tb %>%
+        dplyr::bind_rows(unlabelled_tb) %>%
+        dplyr::select(-sample_id) %>%
+        al_egal(sim_method = "dtw")
 
-        expect_true(sits:::.sits_tibble_test(egal_tb))
-        expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
-        expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
-        expect_true(any(is.na(egal_vec)))
-        expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
-    }
+    egal_vec <- egal_tb %>%
+        dplyr::pull(egal)
+
+    expect_true(sits:::.sits_tibble_test(egal_tb))
+    expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
+    expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
+    expect_true(any(is.na(egal_vec)))
+    expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
+
+})
+
+
+
+test_that("Test expected usage: dtw basic", {
+
+    # NOTE: Only runs if the package dtwclust is available and registered in
+    # proxy::pr_DB.
+    if (proxy::pr_DB$entry_exists("DTW_BASIC") == FALSE)
+        skip("DTW BASIC distance not found in proxy::pr_DB")
+
+    samples_tb <- sits::sits_select(sits::samples_modis_4bands,
+                                    bands = "EVI") %>%
+        dplyr::mutate(sample_id = 1:nrow(.))
+
+    labelled_tb <- samples_tb %>%
+        dplyr::group_by(label) %>%
+        dplyr::sample_n(20) %>%
+        dplyr::ungroup()
+
+    unlabelled_tb <- samples_tb %>%
+        dplyr::filter(!(sample_id %in% labelled_tb$sample_id)) %>%
+        dplyr::group_by(label) %>%
+        dplyr::sample_n(20) %>%
+        dplyr::ungroup() %>%
+        dplyr::mutate(label = NA)
+
+    egal_tb <- labelled_tb %>%
+        dplyr::bind_rows(unlabelled_tb) %>%
+        dplyr::select(-sample_id) %>%
+        al_egal(sim_method = "dtw_basic")
+
+    egal_vec <- egal_tb %>%
+        dplyr::pull(egal)
+
+    expect_true(sits:::.sits_tibble_test(egal_tb))
+    expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
+    expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
+    expect_true(any(is.na(egal_vec)))
+    expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
 
 })
 
