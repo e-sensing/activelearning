@@ -49,36 +49,33 @@ test_that("Test expected usage", {
     # The result is a valid sits' tibble.
     expect_true(sits:::.sits_tibble_test(rs_tb))
 
-    # The input's rows have to match the output's.
+    # The input's number of rows have to match the output's.
     expect_true(nrow(rs_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
 
+    # The metrics exist and they have the right data type.
+    expect_true(all(c("entropy", "least_conf",
+                      "margin_conf", "ratio_conf") %in% colnames(rs_tb)))
+    expect_true(is.double(rs_tb[["entropy"]]))
+    expect_true(is.double(rs_tb[["least_conf"]]))
+    expect_true(is.double(rs_tb[["margin_conf"]]))
+    expect_true(is.double(rs_tb[["ratio_conf"]]))
+
+    # The metrics' values are valid.
+  expect_true(all(rs_tb[["least_conf"]][!is.na(rs_tb[["least_conf"]])]   >= 0))
+  expect_true(all(rs_tb[["margin_conf"]][!is.na(rs_tb[["margin_conf"]])] >= 0))
+  expect_true(all(rs_tb[["ratio_conf"]][!is.na(rs_tb[["ratio_conf"]])]   >= 0))
+  expect_true(all(rs_tb[["entropy"]][!is.na(rs_tb[["entropy"]])]         >= 0))
+  expect_true(all(rs_tb[["least_conf"]][!is.na(rs_tb[["least_conf"]])]   <= 1))
+  expect_true(all(rs_tb[["margin_conf"]][!is.na(rs_tb[["margin_conf"]])] <= 1))
+
     # The number of NAs in the metric should match the number of labelled
-    # samples
+    # samples.
     expect_true(nrow(labelled_tb) == sum(is.na(rs_vec)))
 
     # The labelled samples have egal == NA
     expect_true(any(is.na(rs_vec)))
 
-    # The egal metric is positive (TODO: Check paper)
+    # The egal metric is positive.
     expect_true(all(rs_vec[!is.na(rs_vec)] > 0))
 
-
-    #expect_true(sits:::.sits_tibble_test(new_samples))
-    #expect_true(inherits(new_samples, "sits"))
-    #expect_true(nrow(new_samples) == 100)
-    #expect_true(all(c("entropy", "least_conf",
-    #                  "margin_conf", "ratio_conf") %in% colnames(new_samples)))
-
-    #expect_true(is.double(new_samples[["entropy"]]))
-    #expect_true(is.double(new_samples[["least_conf"]]))
-    #expect_true(is.double(new_samples[["margin_conf"]]))
-    #expect_true(is.double(new_samples[["ratio_conf"]]))
-    #expect_true(all(new_samples[["entropy"]][!is.na(new_samples[["entropy"]])] > 0))
-    #expect_true(all(new_samples[["least_conf"]]  > 0))
-    #expect_true(all(new_samples[["margin_conf"]] > 0))
-    #expect_true(all(new_samples[["ratio_conf"]]  > 0))
-    # expect_true(all(dplyr::between(new_samples[["least_conf"]], 0, 1)))
-    # expect_true(all(dplyr::between(new_samples[["margin_conf"]], 0, 1)))
-
-    # expect_true(all(new_samples[["label"]] %in% samples_tb[["label"]]))
 })
