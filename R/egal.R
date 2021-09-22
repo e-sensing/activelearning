@@ -104,8 +104,11 @@ al_egal <- function(samples_tb,
 #' @param s_labelled_tb   A sits tibble with labelled samples.
 #' @param s_unlabelled_tb A sits tibble with unlabelled samples.
 #' @param sim_method      A character. A method for computing the similarity
-#'                        among samples as described in the function simil the
-#'                        package proxy.
+#'                        among samples as described in the package proxy. If
+#'                        the method is registered in proxy::pr_DB as a
+#'                        distance, then the inverse of the distance is used
+#'                        (e.g. 1/distance).
+#'                        proxy::pr_DB as a distance, then the
 #' @param alpha           A double. It controls the radius of the neighborhood
 #'                        used in the estimation of sample density.
 #' @param beta            A double. It controls the radius of the neighborhood
@@ -140,14 +143,23 @@ al_egal <- function(samples_tb,
     # - S is the similarity between each unlabelled example and its neareast
     #     labelled neighbor.
 
-    # Get new samples and merge them to the original sits tibble.
+    # Check if the provided method is supported.
+    stopifnot(proxy::pr_DB$entry_exists(sim_method))
+
+    # Merge the samples and format them.
     dataset_tb <- dplyr::bind_rows(s_labelled_tb,
                                    s_unlabelled_tb)
+    time_series <- as.matrix(sits:::.sits_distances(dataset_tb)[,-2:0])
 
     # Compute similarity.
-    time_series <- as.matrix(sits:::.sits_distances(dataset_tb)[,-2:0])
-    similarity_mt <- as.matrix(proxy::simil(time_series,
-                                            method = sim_method))
+    sim_entry <- proxy::pr_DB$get_entry(sim_method)
+    if (sim_entry$distance) {
+        similarity_mt <- 1 / as.matrix(proxy::dist(time_series,
+                                                   method = sim_method))
+    }else{
+        similarity_mt <- as.matrix(proxy::simil(time_series,
+                                                method = sim_method))
+    }
 
     # Compute alpha
     sim_diag <- similarity_mt

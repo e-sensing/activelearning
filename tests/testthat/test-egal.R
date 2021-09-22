@@ -31,10 +31,12 @@ test_that("Test expected usage", {
         dplyr::ungroup() %>%
         dplyr::mutate(label = NA)
 
+    #---- Test using a similarity measure ----
+
     egal_tb <- labelled_tb %>%
         dplyr::bind_rows(unlabelled_tb) %>%
         dplyr::select(-sample_id) %>%
-        al_egal()
+        al_egal(sim_method = "correlation")
 
     egal_vec <- egal_tb %>%
         dplyr::pull(egal)
@@ -54,6 +56,62 @@ test_that("Test expected usage", {
 
     # The egal metric is positive (TODO: Check paper)
     expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
+
+
+    #---- Test using a distance measure ----
+
+    egal_tb <- labelled_tb %>%
+        dplyr::bind_rows(unlabelled_tb) %>%
+        dplyr::select(-sample_id) %>%
+        al_egal(sim_method = "Euclidean")
+
+    egal_vec <- egal_tb %>%
+        dplyr::pull(egal)
+
+    expect_true(sits:::.sits_tibble_test(egal_tb))
+    expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
+    expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
+    expect_true(any(is.na(egal_vec)))
+    expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
+
+
+
+    #---- Test using DTW ----
+
+    # NOTE: Only runs ifthe package dtw is available.
+    if (proxy::pr_DB$entry_exists("DTW")) {
+        egal_tb <- labelled_tb %>%
+            dplyr::bind_rows(unlabelled_tb) %>%
+            dplyr::select(-sample_id) %>%
+            al_egal(sim_method = "dtw")
+
+        egal_vec <- egal_tb %>%
+            dplyr::pull(egal)
+
+        expect_true(sits:::.sits_tibble_test(egal_tb))
+        expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
+        expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
+        expect_true(any(is.na(egal_vec)))
+        expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
+    }
+
+    # NOTE: Only runs if the package dtwclust is available.
+    if (proxy::pr_DB$entry_exists("DTW_BASIC")) {
+        egal_tb <- labelled_tb %>%
+            dplyr::bind_rows(unlabelled_tb) %>%
+            dplyr::select(-sample_id) %>%
+            al_egal(sim_method = "dtw_basic")
+
+        egal_vec <- egal_tb %>%
+            dplyr::pull(egal)
+
+        expect_true(sits:::.sits_tibble_test(egal_tb))
+        expect_true(nrow(egal_tb) == (nrow(labelled_tb) + nrow(unlabelled_tb)))
+        expect_true(nrow(labelled_tb) == sum(is.na(egal_vec)))
+        expect_true(any(is.na(egal_vec)))
+        expect_true(all(egal_vec[!is.na(egal_vec)] > 0))
+    }
+
 })
 
 
