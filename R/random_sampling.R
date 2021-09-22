@@ -31,14 +31,12 @@ al_random_sampling <- function(samples_tb,
                                sits_method,
                                multicores = 1){
 
+    if (missing(sits_method))
+        stop("Missing classification method.")
+
     sits:::.sits_tibble_test(samples_tb)
 
     .al_check_time_series(samples_tb)
-
-    assertthat::assert_that(
-        !purrr::is_null(sits_method),
-        msg = "al_random_sampling: please provide a classification method."
-    )
 
     label_tb <- samples_tb %>%
         dplyr::filter(nchar(label) > 0,
