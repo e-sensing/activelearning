@@ -76,7 +76,10 @@ al_egal <- function(samples_tb,
                         beta = beta,
                         w = w)
 
-    stopifnot(nrow(no_label_tb) == nrow(egal_tb))
+    assertthat::assert_that(
+        nrow(no_label_tb) == nrow(egal_tb),
+        msg = "al_random_sampling: please provide a classification method."
+    )
 
     egal_tb <- label_tb %>%
         dplyr::mutate(egal = NA) %>%

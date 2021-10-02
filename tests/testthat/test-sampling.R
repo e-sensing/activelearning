@@ -1,19 +1,21 @@
 test_that("Generate random samples", {
 
-    cube <- sits::sits_cube(
+    cube <- sits_cube(
         source = "LOCAL",
-        name = "sinop-2014",
-        satellite = "TERRA",
-        sensor = "MODIS",
-        data_dir = system.file("extdata/raster/mod13q1", package = "sits"),
+        name = "022024",
+        origin = "BDC",
+        collection = "CB4_64-1",
+        data_dir = system.file("extdata/raster/cbers",
+                               package = "sits"),
+        bands = c("B13", "B14", "B15", "B16"),
         delim = "_",
         parse_info = c("X1", "X2", "tile", "band", "date")
     )
 
-    samples_tb <- sits_get_random_points(data_cube = cube,
-                           n_samples = 100,
-                           multicores = 1)
+    samples_tb <- al_get_random_points(data_cube = cube,
+                                       n_samples = 100,
+                                       multicores = 1)
 
-    expect_true(sits:::.sits_test_tibble(samples_tb))
+    expect_true(sits:::.sits_tibble_test(samples_tb))
     expect_true(nrow(samples_tb) == 100)
 })
