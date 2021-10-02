@@ -7,6 +7,7 @@ test_that("Generate random samples", {
         collection = "CB4_64-1",
         data_dir = system.file("extdata/raster/cbers",
                                package = "sits"),
+        bands = c("B13", "B14", "B15", "B16"),
         delim = "_",
         parse_info = c("X1", "X2", "tile", "band", "date")
     )
