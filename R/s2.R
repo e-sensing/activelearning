@@ -32,7 +32,7 @@ al_s2 <- function(samples_tb,
                   sim_method,
                   keep_n) {
 
-    sits:::.sits_test_tibble(samples_tb)
+    sits:::.sits_tibble_test(samples_tb)
 
     label_tb <- samples_tb %>%
         dplyr::filter(is.na(label) == FALSE,
@@ -41,8 +41,6 @@ al_s2 <- function(samples_tb,
 
     no_label_tb <- samples_tb %>%
         dplyr::filter(is.na(label) | label == "" | label == "NoClass")
-
-    stopifnot(nrow(samples_tb) == nrow(label_tb) + nrow(no_label_tb))
 
     assertthat::assert_that(
         nrow(label_tb) > 0,
@@ -56,10 +54,10 @@ al_s2 <- function(samples_tb,
 
     points_tb <- .al_s2(s_labelled_tb = label_tb,
                         s_unlabelled_tb = no_label_tb,
-                        budget = budget,
+                        sim_method = sim_method,
                         keep_n = keep_n)
 
-    sits:::.sits_test_tibble(points_tb)
+    sits:::.sits_tibble_test(points_tb)
 
     return(points_tb)
 }
@@ -93,7 +91,6 @@ al_s2 <- function(samples_tb,
 
 
 
-
     #---- Algorithm S2 ----
 
     # NOTE:
@@ -104,82 +101,207 @@ al_s2 <- function(samples_tb,
     # L is the subset of labelled samples in V.
     # x a random unlabelled sample
 
-    # budget <- nrow(s_labelled_tb)
-    #
-    # G_mt <- .al_s2_build_graph_mt(
-    #     samples_tb = dplyr::bind_rows(s_labelled_tb, s_unlabelled_tb),
-    #     sim_method = sim_method,
-    #     keep_n = keep_n
-    # )
-    #
-    # L  <- list()
-    #
-    # # While 1 do
-    # labelled_id <- seq_len(nrow(s_labelled_tb))
-    # while (sum(is.na(labelled_id)) < length(labelled_id)) {
-    #
-    #     # Randomly choose unlabeled vertex.
-    #     x <- sample(labelled_id,
-    #                 size = 1,
-    #                 replace = FALSE)
-    #     labelled_id[which(labelled_id == x)] <- NA
-    #
-    #     f_x <- s_labelled_tb[["label"]][x]
-    #     L[[length(L) + 1]] <- list(x = x, f_x = f_x)
-    #
-    #     # NOTE: An edge requires at least 2 vertex.
-    #     if (length(L) == 1)
-    #         next()
-    #
-    #     while (TRUE) {
-    #
-    #         # Remove from G all edges whose two ends have different labels.
-    #         G_mt <- .al_s2_remove_mismatch_edges(G_mt,
-    #                                              dataset_tb = dplyr::bind_rows(
-    #                                                  s_labelled_tb,
-    #                                                  s_unlabelled_tb
-    #                                              ))
-    #
-    #         if (length(L) >= budget)
-    #             return(.sits_label_completion(G, L))
-    #
-    #         x <- .al_s2_mssp(G = G_mt,
-    #                          L = L)
-    #
-    #     }
-    # }
+    G_mt <- .al_s2_build_graph_mt(
+        samples_tb = rbind(s_labelled_tb, s_unlabelled_tb),
+        sim_method = sim_method,
+        keep_n = keep_n
+    )
+
+    # Remove from G all edges whose two ends have different labels.
+    G_mt <- .al_s2_remove_mismatch_edges(
+        G_mt,
+        dataset_tb = rbind(s_labelled_tb, s_unlabelled_tb)
+    )
+
+    L <- list()
+    labelled_id <- sample(seq_len(nrow(s_labelled_tb)))
+    for (x in labelled_id) {
+        f_x <- s_labelled_tb[["label"]][x]
+        L[[length(L) + 1]] <- list(x = x, f_x = f_x)
+    }
+
+    midpoints <- .al_s2_mssp(G_mt = G_mt,
+                             L = L)
+    stopifnot(length(midpoints) == nrow(s_labelled_tb))
+
+    # Get the samples of the midpoints.
+   # NOTE: 1 represents the samples that sould be sent to the oracle; NA are
+   # the training samples, and 0 are the remaining samples.
+   samples_tb <- rbind(s_labelled_tb, s_unlabelled_tb)
+   samples_tb["s2"] <- 0.0
+   samples_tb[["s2"]][midpoints] <- 1.0
+   samples_tb[["s2"]][1:nrow(s_labelled_tb)] <- NA_real_
+
+   # TODO: Do the classification.
+
+   return(samples_tb)
 }
 
 
 
+#' @title Compute the MSSP subroutine.
+#'
+#' @name .al_s2_mssp
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description This function takes a graph (represented as a matrix) and a set
+#' of labelled vertexes and computes the length of the shortest paths and the
+#' mid-points along them.
+#'
+#' @param G_mt A matrix representing a graph. See function
+#'             .al_s2_build_graph_mt
+#' @param L    A list of lists containing the ids of the vertexes in G_mt and
+#'             their labels.
+#' @return     A vector. The vertex ids of the mid-points along the shortest
+#'             paths between the elements of L.
+#'
+.al_s2_mssp <- function(G_mt, L) {
 
-.al_s2_mssp <- function(G, L) {
+    L_x  <- unlist(as.data.frame(do.call(rbind, L))[["x"]])
+    L_fx <- unlist(as.data.frame(do.call(rbind, L))[["f_x"]])
+    stopifnot(length(L_x) == length(L_fx))
+    stopifnot(ncol(G_mt) == nrow(G_mt))
 
-    # NOTE: This breaks down when length(L) == 1
-    # TODO: here I go!!!
+    path_lt <- lapply(L_x,
+                       FUN = .al_s2_short_paths,
+                       to_vertices = L_x,
+                       G_mt = G_mt)
 
-    # G_gh <- igraph::graph_from_adjacency_matrix(adjmatrix = G,
-    #                                             mode = "undirected",
-    #                                             weighted = TRUE,
-    #                                             diag = FALSE)
-    #
-    # L_x  <- unlist(as.data.frame(do.call(rbind, L))[["x"]])
-    # L_fx <- unlist(as.data.frame(do.call(rbind, L))[["f_x"]])
-    #
-    # for (v_from in L_x) {
-    #     # TODO: Exclude edges with the same label at both ends.
-    #     short_path <- igraph::shortest_paths(graph = G_gh,
-    #                                          from = v_from,
-    #                                          to = L_vec[which(L_vec != v_from)],
-    #                                          output = "both")
-    #     short_path[["vpath"]][[1]]
-    #     short_path[["epath"]][[1]]
-    # }
+    s_lengths <- sapply(path_lt,
+                        FUN = function(x) {
+                            return(x[["path_lengths"]])
+                        })
+
+    # NOTE: Read mid_points by row.
+    mid_points <- t(sapply(path_lt,
+                         FUN = function(x) {
+                             return(x[["mid_point_ids"]])
+                         }))
+
+    stopifnot(length(L_x) == nrow(s_lengths))
+    stopifnot(length(L_x) == nrow(mid_points))
+    stopifnot(nrow(s_lengths) == ncol(s_lengths))
+    stopifnot(nrow(mid_points) == ncol(mid_points))
+
+    # Exclude edges with the same label at both ends.
+    same_label <- expand.grid(L_fx, L_fx,
+                              stringsAsFactors = FALSE)
+
+    same_label  <- matrix(data = same_label[[1]] == same_label[[2]],
+                          ncol = length(L_fx),
+                          byrow = TRUE)
+
+    s_lengths[same_label] <- NA
+    s_lengths[is.na(same_label)] <- NA
+
+    # Select the shortest shortest path.
+    ss_ids <- apply(s_lengths,
+                    MARGIN = 1,
+                    FUN = which.min)
+
+    if (length(ss_ids) == 0)
+        ss_ids <- rep(NA_integer_, times = nrow(mid_points))
+
+    stopifnot(length(ss_ids) == nrow(mid_points))
+
+    # Get the midpoints.
+    mid_point_vertexes <- vapply(seq_len(nrow(mid_points)),
+                                 FUN = function(x, mid_points, ss_ids) {
+                                     if (length(ss_ids[[x]]) == 0)
+                                         return(NA_integer_)
+                                     if (is.na(ss_ids[[x]]))
+                                         return(NA_integer_)
+                                     return(mid_points[x, ss_ids[[x]]])
+                                 },
+                                 FUN.VALUE = integer(1),
+                                 mid_points = mid_points,
+                                 ss_ids = ss_ids)
+
+    stopifnot(length(L_x) == length(mid_point_vertexes))
+    return(mid_point_vertexes)
 }
+
+
+
+#' @title Get the shortest paths between vertices.
+#'
+#' @name .al_s2_short_paths
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description This function computes the paths from a vertex to a set of
+#' vertices in graph.
+#'
+#' @param fom_vertex  A single integer. The index of a vertex in G_mt.
+#' @param to_vertices An integer. The indices of vertices in G_mt.
+#' @param G_mt        A matrix representing a graph. See function
+#'                    .al_s2_build_graph_mt
+#' @return            A list of two: The shortest paths' lengths, and
+#'                    the vertex id of their mid points.
+#'
+.al_s2_short_paths <- function(from_vertex, to_vertices, G_mt) {
+
+    # Replace NAs with 0s; make the matrix whole again.
+    G_mt[is.na(G_mt)] <- 0
+    G_mt <- G_mt + t(G_mt)
+
+    G_gh <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                                mode = "undirected",
+                                                weighted = TRUE,
+                                                diag = FALSE)
+
+    s_paths <- igraph::get.shortest.paths(graph = G_gh,
+                                          from = from_vertex,
+                                          to = to_vertices,
+                                          output = "vpath")
+
+    # Path from vertex to each other vertex.
+    paths <- s_paths[["vpath"]]
+
+    # Length from vertex to each other vertex.
+    lengths <- vapply(seq_along(paths),
+                      FUN = function(x, paths, G_mt) {
+                          sum(igraph::E(G_gh,
+                                        path = paths[[x]])$weight)
+                      },
+                      FUN.VALUE = double(1),
+                      paths = paths,
+                      G_mt = G_mt)
+
+    # Compute the midpoints.
+    # NOTE: The options are:
+    # - Choose the middle vertex.
+    # - Choose one of the vertices of the longest edge?
+    # - Do the cummulative sum of the distances along the path and select one
+    #   of the vertices of the edge in the middle. ANSWER: It doesn't make
+    #   sense. The cummulative distance along the path is not the same as the
+    #   distance from the path's first and last vertices (triangular
+    #   inequality).
+
+    # Choose the middle vertex.
+    mid_point_ids <- vapply(paths,
+                            FUN = function(path) {
+                                x <- as.vector(unlist(path))
+                                return(x[median(1:length(x))])
+                            },
+                            FUN.VALUE = integer(1))
+
+    return(list(path_lengths = lengths,
+                mid_point_ids = mid_point_ids))
+}
+
+
 
 .al_s2_label_completion <- function(G, L){
+    # TODO: implement!
     TRUE
 }
+
 
 
 #' @title Remove mismatching edged from a matrix graph.
@@ -193,25 +315,25 @@ al_s2 <- function(samples_tb,
 #' @description This function takes a matrix representing a graph and removes
 #' the edges with different labels at their extremes.
 #'
-#' @param G          A matrix representing a graph (see .al_s2_build_graph_mt).
+#' @param G_mt       A matrix representing a graph (see .al_s2_build_graph_mt).
 #' @param dataset_tb A sits tibble.
 #' @return           A matrix representation of a graph with potentially less
 #'                   edges than G.
 #'
-.al_s2_remove_mismatch_edges <- function(G, dataset_tb){
+.al_s2_remove_mismatch_edges <- function(G_mt, dataset_tb){
 
     dataset_tb["sample_id"] <- seq_len(nrow(dataset_tb))
 
     # Remove from G all edges which two ends have different labels
-    mismatch_ls <- lapply(1:nrow(G),
-                          FUN = function(sample_id, G, dataset_tb){
+    mismatch_ls <- lapply(1:nrow(G_mt),
+                          FUN = function(sample_id, G_mt, dataset_tb){
 
                               this_label <- dataset_tb[["label"]][sample_id]
 
                               if (is.na(this_label) || this_label == "")
                                   return(integer())
 
-                              this_row <- G[sample_id, ]
+                              this_row <- G_mt[sample_id, ]
 
                               closest_ids <- which(!is.na(this_row))
 
@@ -223,7 +345,7 @@ al_s2 <- function(samples_tb,
 
                               return(mismatch_ids)
                           },
-                          G = G,
+                          G_mt = G_mt,
                           dataset_tb = dataset_tb)
 
     stopifnot(length(mismatch_ls) == nrow(dataset_tb))
@@ -235,13 +357,11 @@ al_s2 <- function(samples_tb,
         if (length(mismatch_vec) == 0)
             next()
 
-        G[i, mismatch_vec] <- NA
+        G_mt[i, mismatch_vec] <- NA
     }
 
-    return(G)
+    return(G_mt)
 }
-
-
 
 
 
@@ -284,6 +404,6 @@ al_s2 <- function(samples_tb,
                            x[which(!(x %in% top))] <- NA
                            return(x)
                        },
-                       n_closest = keep_n))
-    return(dist_mt)
+                   n_closest = keep_n))
+   return(dist_mt)
 }
