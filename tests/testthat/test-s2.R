@@ -10,7 +10,7 @@ one_path_mt <- function(n_diag, e_weight) {
     stopifnot(length(n_diag) == 1)
     stopifnot(length(e_weight) == n_diag)
 
-    one_path <- matrix(NA, nrow = n_diag, ncol = n_diag)
+    one_path <- matrix(0, nrow = n_diag, ncol = n_diag)
     for (i in 2:nrow(one_path)) {
         one_path[i, i - 1] <- e_weight[i]
     }
@@ -34,6 +34,7 @@ test_that("Test input samples", {
     # The sample set must contain both labelled and unlabelled samples.
     expect_error(al_s2(samples_tb))
     expect_error(al_s2(all_unlabelled))
+
 })
 
 
@@ -44,15 +45,16 @@ test_that("Test matrix representation of graph", {
                                     bands = "EVI") %>%
         dplyr::slice(1:4)
 
-    G_mt <- .al_s2_build_graph_mt(samples_tb,
-                                  sim_method = "Euclidean",
-                                  keep_n = 2)
-
-    # The upper part of the matrix is NA.
-    expect_true(all(is.na(G_mt[upper.tri(G_mt, diag = TRUE)])))
+    G_mt <- .al_s2_bild_closest_vertex_graph(samples_tb,
+                                             sim_method = "Euclidean",
+                                             closest_n = 2)
 
     # The matrix is squared.
     expect_equal(nrow(G_mt), ncol(G_mt))
+
+    # The matrix is symmetric.
+    expect_true(isSymmetric(G_mt))
+
 })
 
 
@@ -61,27 +63,34 @@ test_that("Remove missmatching edges: Remove nothing", {
 
     # No mismatching labels in data_set.
 
-    samples_tb <- sits::sits_select(sits::samples_modis_4bands,
-                                    bands = "EVI") %>%
-        dplyr::slice(1:4)
-
-    data_set <- samples_tb %>%
+    samples_tb <- sits::samples_modis_4bands %>%
+        sits::sits_select(bands = "EVI") %>%
+        dplyr::slice(1:4) %>%
         dplyr::mutate(sample_id = dplyr::row_number(),
                       label = dplyr::if_else(sample_id < 3,
                                              "Pasture",
                                              NA_character_))
 
-    G_mt <- .al_s2_build_graph_mt(data_set,
-                     sim_method = "Euclidean",
-                     keep_n = 2)
+    G_mt <- .al_s2_bild_closest_vertex_graph(samples_tb,
+                                             sim_method = "Euclidean",
+                                             closest_n = 2)
 
-    new_G_mt <- .al_s2_remove_mismatch_edges(G_mt = G_mt,
-                                             dataset_tb = data_set)
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+    igraph::V(G)$label <- samples_tb$label
 
-    expect_true(all(is.na(new_G_mt[upper.tri(new_G_mt, diag = TRUE)])))
+    G <- .al_s2_remove_mismatch_edges(G = G)
+
+    new_G_mt <- as.matrix(G[])
+
     expect_true(all(dim(G_mt) == dim(new_G_mt)))
-    expect_equal(is.na(G_mt), is.na(new_G_mt))
-    expect_equal(sum(G_mt, na.rm = TRUE), sum(new_G_mt, na.rm = TRUE))
+    expect_true(isSymmetric(G_mt))
+    expect_equal(is.na(G_mt), is.na(as.matrix(G[])))
+    expect_equal(sum(G_mt, na.rm = TRUE),
+                 sum(as.matrix(G[]), na.rm = TRUE))
+
 })
 
 
@@ -90,11 +99,9 @@ test_that("Remove missmatching edges: one label", {
 
     # one pair of mismatching label in data_set.
 
-    samples_tb <- sits::sits_select(sits::samples_modis_4bands,
-                                    bands = "EVI") %>%
-        dplyr::slice(1:4)
-
-    data_set <- samples_tb %>%
+    samples_tb <- sits::samples_modis_4bands %>%
+        sits::sits_select(bands = "EVI") %>%
+        dplyr::slice(1:4) %>%
         dplyr::mutate(sample_id = dplyr::row_number(),
                       label = dplyr::if_else(sample_id < 3,
                                              "Pasture",
@@ -103,17 +110,23 @@ test_that("Remove missmatching edges: one label", {
                                              "Forest",
                                              label))
 
-    G_mt <- .al_s2_build_graph_mt(data_set,
-                     sim_method = "Euclidean",
-                     keep_n = 2)
+    G_mt <- .al_s2_bild_closest_vertex_graph(samples_tb,
+                                             sim_method = "Euclidean",
+                                             closest_n = 2)
 
-    new_G_mt <- .al_s2_remove_mismatch_edges(G_mt = G_mt,
-                                             dataset_tb = data_set)
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+    igraph::V(G)$label <- samples_tb$label
 
-    expect_true(all(is.na(new_G_mt[upper.tri(new_G_mt, diag = TRUE)])))
+    G <- .al_s2_remove_mismatch_edges(G = G)
+
+    new_G_mt <- as.matrix(G[])
+
     expect_true(all(dim(G_mt) == dim(new_G_mt)))
     expect_true(!is.na(G_mt[2, 1]))
-    expect_true(is.na(new_G_mt[2, 1]))
+    expect_true(!is.na(new_G_mt[2, 1]))
 
 })
 
@@ -126,15 +139,20 @@ test_that("Test shortest paths: one path", {
 
     G_mt <- one_path_mt(n_diag = 5,
                         e_weight = rep(10, times = 5))
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+
     L_x <- 1:nrow(G_mt)
     res <- lapply(seq_along(L_x),
                   FUN = function(x, L_x, G_mt) {
                       .al_s2_short_paths(from_vertex = L_x[x],
                                          to_vertices = L_x,
-                                         G_mt = G_mt)
+                                         G = G)
                   },
                   L_x = L_x,
-                  G_mt = G_mt)
+                  G = G)
 
     s_length_mt <- t(sapply(seq_along(res),
                           FUN = function(x) {
@@ -153,7 +171,6 @@ test_that("Test shortest paths: one path", {
     expect_true(nrow(s_length_mt) == length(L_x))
 
     # Test the lengths.
-
     expect_equal(s_length_mt,
                  matrix(c(0,  10, 20, 30, 40,
                           10, 0,  10, 20, 30,
@@ -192,16 +209,21 @@ test_that("Test shortest paths: Two paths, no change", {
                         e_weight = rep(10, times = 5))
     G_mt[5, 1] <- 100
 
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+
     L_x <- 1:nrow(G_mt)
 
     res <- lapply(seq_along(L_x),
                   FUN = function(x, L_x, G_mt) {
                       .al_s2_short_paths(from_vertex = L_x[x],
                                          to_vertices = L_x,
-                                         G_mt = G_mt)
+                                         G = G)
                   },
                   L_x = L_x,
-                  G_mt = G_mt)
+                  G = G)
 
     s_length_mt <- t(sapply(seq_along(res),
                           FUN = function(x) {
@@ -244,16 +266,21 @@ test_that("Test shortest paths: Two paths, change", {
                         e_weight = rep(10, times = 5))
     G_mt[5, 1] <- 1
 
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+
     L_x <- 1:nrow(G_mt)
 
     res <- lapply(seq_along(L_x),
                   FUN = function(x, L_x, G_mt) {
                       .al_s2_short_paths(from_vertex = L_x[x],
                                          to_vertices = L_x,
-                                         G_mt = G_mt)
+                                         G= G)
                   },
                   L_x = L_x,
-                  G_mt = G_mt)
+                  G = G)
 
     s_length_mt <- t(sapply(seq_along(res),
                           FUN = function(x) {
@@ -294,6 +321,11 @@ test_that("MSSP: one path, different labels", {
     G_mt <- one_path_mt(n_diag = 5,
                         e_weight = rep(10, times = 5))
 
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+
     L_fx <- paste("label", 1:nrow(G_mt))
     L_fx[2:(length(L_fx) - 1)] <- NA
     L <- lapply(seq_along(L_fx),
@@ -301,11 +333,12 @@ test_that("MSSP: one path, different labels", {
                     list(x = x, f_x = L_fx[x])
                 },
                 L_fx = L_fx)
-    mid_points <- .al_s2_mssp(G_mt = G_mt,
+    mid_points <- .al_s2_mssp(G = G,
                               L = L)
     expect_true(length(mid_points) == length(L_fx))
     expect_equal(mid_points,
                  c(3, NA, NA, NA, 3))
+
 })
 
 
@@ -317,6 +350,11 @@ test_that("MSSP: one path, repeated labels", {
 
     G_mt <- one_path_mt(n_diag = 5,
                         e_weight = rep(10, times = 5))
+
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
     L_fx <- rep("label 1", times = nrow(G_mt))
     L_fx[2:(length(L_fx) - 1)] <- NA
     L <- lapply(seq_along(L_fx),
@@ -324,12 +362,13 @@ test_that("MSSP: one path, repeated labels", {
                     list(x = x, f_x = L_fx[x])
                 },
                 L_fx = L_fx)
-    mid_points <- .al_s2_mssp(G_mt = G_mt,
+    mid_points <- .al_s2_mssp(G = G,
                               L = L)
 
     expect_true(length(mid_points) == length(L_fx))
     expect_equal(mid_points,
                  rep(NA_integer_, times = length(L_fx)))
+
 })
 
 
@@ -344,6 +383,11 @@ test_that("MSSP: two paths, no change", {
                         e_weight = rep(10, times = 5))
     G_mt[5, 1] <- 100
 
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+
     L_fx <- paste("label", 1:nrow(G_mt))
     L_fx[2:(length(L_fx) - 1)] <- NA
     L <- lapply(seq_along(L_fx),
@@ -351,7 +395,7 @@ test_that("MSSP: two paths, no change", {
                     list(x = x, f_x = L_fx[x])
                 },
                 L_fx = L_fx)
-    mid_points <- .al_s2_mssp(G_mt = G_mt,
+    mid_points <- .al_s2_mssp(G = G,
                               L = L)
     expect_true(length(mid_points) == length(L_fx))
     expect_equal(mid_points,
@@ -368,6 +412,12 @@ test_that("MSSP: two paths, no change", {
                         e_weight = rep(10, times = 5))
     G_mt[5, 1] <- 10
 
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+
+
     L_fx <- paste("label", 1:nrow(G_mt))
     L_fx[2:(length(L_fx) - 1)] <- NA
     L <- lapply(seq_along(L_fx),
@@ -375,7 +425,7 @@ test_that("MSSP: two paths, no change", {
                     list(x = x, f_x = L_fx[x])
                 },
                 L_fx = L_fx)
-    mid_points <- .al_s2_mssp(G_mt = G_mt,
+    mid_points <- .al_s2_mssp(G = G,
                               L = L)
     expect_true(length(mid_points) == length(L_fx))
     expect_equal(mid_points,
@@ -409,7 +459,7 @@ test_that("Test expected usage", {
 
     res <- al_s2(samples_tb,
                  sim_method = "correlation",
-                 keep_n = 6)
+                 closest_n = 6)
 
     expect_true(nrow(res) == nrow(samples_tb))
     expect_true("s2" %in% colnames(res))
