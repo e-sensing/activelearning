@@ -1,6 +1,6 @@
 test_that("Generate random samples", {
 
-    cube <- sits_cube(
+    cube <- sits::sits_cube(
         source = "LOCAL",
         name = "022024",
         origin = "BDC",
