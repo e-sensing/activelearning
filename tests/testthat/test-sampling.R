@@ -5,9 +5,9 @@ test_that("Generate random samples", {
         name = "022024",
         origin = "BDC",
         collection = "CB4_64-1",
-        data_dir = system.file("extdata/raster/cbers",
+        data_dir = system.file("extdata/raster/mod13q1",
                                package = "sits"),
-        bands = c("B13", "B14", "B15", "B16"),
+        bands = c("NDVI", "EVI"),
         delim = "_",
         parse_info = c("X1", "X2", "tile", "band", "date")
     )
