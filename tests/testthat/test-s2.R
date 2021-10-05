@@ -409,7 +409,7 @@ test_that("Test expected usage", {
 
     res <- al_s2(samples_tb,
                  sim_method = "correlation",
-                 keep_n = 10)
+                 keep_n = 6)
 
     expect_true(nrow(res) == nrow(samples_tb))
     expect_true("s2" %in% colnames(res))
