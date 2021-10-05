@@ -87,8 +87,9 @@ al_s2 <- function(samples_tb,
 .al_s2 <- function(s_labelled_tb,
                    s_unlabelled_tb,
                    sim_method,
-                   keep_n) {
-
+                   keep_n,
+                   mode = "active_learning") {
+#TODO: use igraph object the whole time. Check s2_v2.R
 
 
     #---- Algorithm S2 ----
@@ -120,21 +121,26 @@ al_s2 <- function(samples_tb,
         L[[length(L) + 1]] <- list(x = x, f_x = f_x)
     }
 
-    midpoints <- .al_s2_mssp(G_mt = G_mt,
-                             L = L)
-    stopifnot(length(midpoints) == nrow(s_labelled_tb))
 
-    # Get the samples of the midpoints.
-   # NOTE: 1 represents the samples that sould be sent to the oracle; NA are
-   # the training samples, and 0 are the remaining samples.
-   samples_tb <- rbind(s_labelled_tb, s_unlabelled_tb)
-   samples_tb["s2"] <- 0.0
-   samples_tb[["s2"]][midpoints] <- 1.0
-   samples_tb[["s2"]][1:nrow(s_labelled_tb)] <- NA_real_
+    if (mode == "active_learning") {
+        midpoints <- .al_s2_mssp(G_mt = G_mt,
+                                 L = L)
+        stopifnot(length(midpoints) == nrow(s_labelled_tb))
+
+        # Get the samples of the midpoints.
+        # NOTE: 1 represents the samples that sould be sent to the oracle; NA
+        # are the training samples, and 0 are the remaining samples.
+        samples_tb <- rbind(s_labelled_tb, s_unlabelled_tb)
+        samples_tb["s2"] <- 0.0
+        samples_tb[["s2"]][midpoints] <- 1.0
+        samples_tb[["s2"]][1:nrow(s_labelled_tb)] <- NA_real_
+
+        return(samples_tb)
+   }
 
    # TODO: Do the classification.
+   # - test igraph::cluster_label_prop
 
-   return(samples_tb)
 }
 
 
