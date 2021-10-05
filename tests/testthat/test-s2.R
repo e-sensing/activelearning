@@ -457,13 +457,37 @@ test_that("Test expected usage", {
         dplyr::bind_rows(unlabelled_tb) %>%
         dplyr::select(-sample_id)
 
-    res <- al_s2(samples_tb,
-                 sim_method = "correlation",
-                 closest_n = 6)
+    label_vec <- sort(unique(samples_tb[["label"]]))
 
-    expect_true(nrow(res) == nrow(samples_tb))
-    expect_true("s2" %in% colnames(res))
+    expect_error(al_s2(samples_tb,
+                       sim_method = "correlation",
+                       closest_n = 6,
+                       mode = "make_up_mode"))
 
-    #TODO: Test the results.
+    res_al <- al_s2(samples_tb,
+                    sim_method = "correlation",
+                    closest_n = 6,
+                    mode = "active_learning")
+
+    expect_true(nrow(res_al) == nrow(samples_tb))
+    expect_true("s2" %in% colnames(res_al))
+    expect_true(all(res_al[["s2"]] %in% c(0, 1, NA)))
+
+    res_ssl <- al_s2(samples_tb,
+                     sim_method = "correlation",
+                     closest_n = 6,
+                     mode = "semi_supervised_learning")
+
+    expect_true(nrow(res_ssl) == nrow(samples_tb))
+    expect_true(sum(is.na(res_ssl[["label"]])) == 0)
+    expect_true(all(res_ssl[["label"]] %in% label_vec))
+
+    labelled_samples <- samples_tb[["label"]]
+    labelled_samples <- labelled_samples[!is.na(labelled_samples)]
+
+    expect_true(
+        all(res_ssl[["label"]][1:length(labelled_samples)] == labelled_samples)
+    )
+
 })
 

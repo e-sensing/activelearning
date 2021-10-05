@@ -20,17 +20,18 @@
 #'                        samples (i.e. NA).
 #' @param sim_method      A character. A method for computing the similarity
 #'                        among samples. See proxy::simil for details.
-#' @param keep_n          An integer. The number of most similar samples to
+#' @param closest_n       An integer. The number of most similar samples to
 #'                        keep while building the graph.
-#' @param budget          An integer. It controls the maximum number of queries
-#'                        of the S2 algorithm to complete a learning task.
+#' @param mode            A character telling if the functin runs on either the
+#'                        "active_learning" or "semi_supervised_learning" mode.
 #' @return                A sits tibble with updated labels.
 #'
 #' @export
 #'
 al_s2 <- function(samples_tb,
                   sim_method,
-                  keep_n) {
+                  closest_n,
+                  mode = "active_learning") {
 
     sits:::.sits_tibble_test(samples_tb)
 
@@ -55,7 +56,8 @@ al_s2 <- function(samples_tb,
     points_tb <- .al_s2(s_labelled_tb = label_tb,
                         s_unlabelled_tb = no_label_tb,
                         sim_method = sim_method,
-                        keep_n = keep_n)
+                        closest_n = closest_n,
+                        mode = mode)
 
     sits:::.sits_tibble_test(points_tb)
 
@@ -80,19 +82,20 @@ al_s2 <- function(samples_tb,
 #' @param s_unlabelled_tb A sits tibble with unlabelled samples.
 #' @param sim_method      A character. A method for computing the similarity
 #'                        among samples. See proxy::simil for details.
-#' @param keep_n          An integer. The number of most similar samples to
+#' @param closest_n       An integer. The number of most similar samples to
 #'                        keep while building the graph.
+#' @param mode            A character telling if the functin runs on either the
+#'                        "active_learning" or "semi_supervised_learning" mode.
 #' @return                A sits tibble with updated labels.
 #'
 .al_s2 <- function(s_labelled_tb,
                    s_unlabelled_tb,
                    sim_method,
-                   keep_n,
+                   closest_n,
                    mode = "active_learning") {
-#TODO: use igraph object the whole time. Check s2_v2.R
 
-
-    #---- Algorithm S2 ----
+    stopifnot(mode %in% c("active_learning",
+                          "semi_supervised_learning"))
 
     # NOTE:
     # G is an undirected graph (V, E).
@@ -102,18 +105,21 @@ al_s2 <- function(samples_tb,
     # L is the subset of labelled samples in V.
     # x a random unlabelled sample
 
-    G_mt <- .al_s2_build_graph_mt(
-        samples_tb = rbind(s_labelled_tb, s_unlabelled_tb),
-        sim_method = sim_method,
-        keep_n = keep_n
-    )
+    samples_tb <- rbind(s_labelled_tb, s_unlabelled_tb)
 
-    # Remove from G all edges whose two ends have different labels.
-    G_mt <- .al_s2_remove_mismatch_edges(
-        G_mt,
-        dataset_tb = rbind(s_labelled_tb, s_unlabelled_tb)
-    )
+    # Build a graph.
+    G_mt <- .al_s2_bild_closest_vertex_graph(samples_tb = samples_tb,
+                                             sim_method = sim_method,
+                                             closest_n = closest_n)
+    G <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
+                                             mode = "undirected",
+                                             weighted = TRUE,
+                                             diag = FALSE)
+    igraph::V(G)$label <- samples_tb$label
 
+    G <- .al_s2_remove_mismatch_edges(G)
+
+    # Build L, a subset of labelled samples in V (scrambled).
     L <- list()
     labelled_id <- sample(seq_len(nrow(s_labelled_tb)))
     for (x in labelled_id) {
@@ -121,10 +127,8 @@ al_s2 <- function(samples_tb,
         L[[length(L) + 1]] <- list(x = x, f_x = f_x)
     }
 
-
     if (mode == "active_learning") {
-        midpoints <- .al_s2_mssp(G_mt = G_mt,
-                                 L = L)
+        midpoints <- .al_s2_mssp(G = G, L = L)
         stopifnot(length(midpoints) == nrow(s_labelled_tb))
 
         # Get the samples of the midpoints.
@@ -138,9 +142,65 @@ al_s2 <- function(samples_tb,
         return(samples_tb)
    }
 
-   # TODO: Do the classification.
-   # - test igraph::cluster_label_prop
+    # Propagate the labels in G.
+    # TODO: test igraph::min_cut and other clustering functions in
+    #      igraph::cluster_label_prop's help.
+    label_vec <- sort(unique(igraph::V(G)$label))
+    initial_vec <- as.integer(factor(igraph::V(G)$label,
+                                     levels = label_vec))
+    initial_vec[is.na(initial_vec)] <- -1
+    community <-  igraph::cluster_label_prop(G,
+                                             initial = initial_vec,
+                                             fixed = initial_vec > 0)
+    new_label <- igraph::membership(community)
+    new_label <- label_vec[new_label]
+    stopifnot(length(new_label) == nrow(samples_tb))
 
+    samples_tb["label"] <- new_label
+
+    return(samples_tb)
+
+}
+
+
+
+#' @title Remove mismatching edges from a graph.
+#'
+#' @name .al_s2_remove_mismatch_edges
+#'
+#' @keywords internal
+#'
+#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
+#'
+#' @description This function takes a graph and removes the edges with
+#' different labels at their extremes.
+#'
+#' @param G       An igraph object whose veteces have a label attribute.
+#' @return        A graph with the same or less edges than G.
+#'
+.al_s2_remove_mismatch_edges <- function(G) {
+
+    labels <- igraph::V(G)$label
+
+    same_label <- expand.grid(lab_1 = labels,
+                              lab_2 = labels,
+                              stringsAsFactors = FALSE)
+    same_label <- cbind(same_label,
+                        expand.grid(id_1 = 1:length(labels),
+                                    id_2 = 1:length(labels)))
+    same_label["same"] <- same_label[[1]] == same_label[[2]]
+    for(i in seq_len(nrow(same_label))){
+        if (same_label[i, "id_1"] < same_label[i, "id_2"])
+            next()
+        if (any(is.na(c(same_label[i, "lab_1"], same_label[i, "lab_2"]))))
+            next()
+        if (same_label[i, "same"])
+            next()
+        if (G[same_label[i, "id_1"], same_label[i, "id_2"]] > 0)
+            G[same_label[i, "id_1"], same_label[i, "id_2"]] <- 0
+    }
+
+    return(G)
 }
 
 
@@ -153,53 +213,46 @@ al_s2 <- function(samples_tb,
 #'
 #' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
 #'
-#' @description This function takes a graph (represented as a matrix) and a set
-#' of labelled vertexes and computes the length of the shortest paths and the
-#' mid-points along them.
+#' @description This function takes a graph and a set of labelled vertexes and
+#' computes the length of the shortest paths and the points along them.
 #'
-#' @param G_mt A matrix representing a graph. See function
-#'             .al_s2_build_graph_mt
+#' @param G    A igraph object.
 #' @param L    A list of lists containing the ids of the vertexes in G_mt and
 #'             their labels.
 #' @return     A vector. The vertex ids of the mid-points along the shortest
 #'             paths between the elements of L.
 #'
-.al_s2_mssp <- function(G_mt, L) {
+.al_s2_mssp <- function(G, L) {
 
     L_x  <- unlist(as.data.frame(do.call(rbind, L))[["x"]])
     L_fx <- unlist(as.data.frame(do.call(rbind, L))[["f_x"]])
     stopifnot(length(L_x) == length(L_fx))
-    stopifnot(ncol(G_mt) == nrow(G_mt))
 
     path_lt <- lapply(L_x,
-                       FUN = .al_s2_short_paths,
-                       to_vertices = L_x,
-                       G_mt = G_mt)
+                      FUN = .al_s2_short_paths,
+                      to_vertices = L_x,
+                      G = G)
 
     s_lengths <- sapply(path_lt,
                         FUN = function(x) {
                             return(x[["path_lengths"]])
                         })
+    stopifnot(length(L_x) == nrow(s_lengths))
+    stopifnot(nrow(s_lengths) == ncol(s_lengths))
 
     # NOTE: Read mid_points by row.
     mid_points <- t(sapply(path_lt,
                          FUN = function(x) {
                              return(x[["mid_point_ids"]])
                          }))
-
-    stopifnot(length(L_x) == nrow(s_lengths))
     stopifnot(length(L_x) == nrow(mid_points))
-    stopifnot(nrow(s_lengths) == ncol(s_lengths))
     stopifnot(nrow(mid_points) == ncol(mid_points))
 
-    # Exclude edges with the same label at both ends.
-    same_label <- expand.grid(L_fx, L_fx,
-                              stringsAsFactors = FALSE)
-
-    same_label  <- matrix(data = same_label[[1]] == same_label[[2]],
-                          ncol = length(L_fx),
-                          byrow = TRUE)
-
+    # Exclude paths with the same label at both ends.
+    same_label <- expand.grid(L_fx, L_fx, stringsAsFactors = FALSE)
+    same_label <- matrix(data = same_label[[1]] == same_label[[2]],
+                         ncol = length(L_fx),
+                         byrow = TRUE)
     s_lengths[same_label] <- NA
     s_lengths[is.na(same_label)] <- NA
 
@@ -225,8 +278,8 @@ al_s2 <- function(samples_tb,
                                  FUN.VALUE = integer(1),
                                  mid_points = mid_points,
                                  ss_ids = ss_ids)
-
     stopifnot(length(L_x) == length(mid_point_vertexes))
+
     return(mid_point_vertexes)
 }
 
@@ -243,25 +296,15 @@ al_s2 <- function(samples_tb,
 #' @description This function computes the paths from a vertex to a set of
 #' vertices in graph.
 #'
-#' @param fom_vertex  A single integer. The index of a vertex in G_mt.
-#' @param to_vertices An integer. The indices of vertices in G_mt.
-#' @param G_mt        A matrix representing a graph. See function
-#'                    .al_s2_build_graph_mt
+#' @param fom_vertex  A single integer. The index of a vertex in G.
+#' @param to_vertices An integer. The indices of vertices in G.
+#' @param G           An igraph object.
 #' @return            A list of two: The shortest paths' lengths, and
 #'                    the vertex id of their mid points.
 #'
-.al_s2_short_paths <- function(from_vertex, to_vertices, G_mt) {
+.al_s2_short_paths <- function(from_vertex, to_vertices, G) {
 
-    # Replace NAs with 0s; make the matrix whole again.
-    G_mt[is.na(G_mt)] <- 0
-    G_mt <- G_mt + t(G_mt)
-
-    G_gh <- igraph::graph_from_adjacency_matrix(adjmatrix = G_mt,
-                                                mode = "undirected",
-                                                weighted = TRUE,
-                                                diag = FALSE)
-
-    s_paths <- igraph::get.shortest.paths(graph = G_gh,
+    s_paths <- igraph::get.shortest.paths(graph = G,
                                           from = from_vertex,
                                           to = to_vertices,
                                           output = "vpath")
@@ -271,25 +314,13 @@ al_s2 <- function(samples_tb,
 
     # Length from vertex to each other vertex.
     lengths <- vapply(seq_along(paths),
-                      FUN = function(x, paths, G_mt) {
-                          sum(igraph::E(G_gh,
-                                        path = paths[[x]])$weight)
+                      FUN = function(x, paths) {
+                          sum(igraph::E(G, path = paths[[x]])$weight)
                       },
                       FUN.VALUE = double(1),
-                      paths = paths,
-                      G_mt = G_mt)
+                      paths = paths)
 
-    # Compute the midpoints.
-    # NOTE: The options are:
-    # - Choose the middle vertex.
-    # - Choose one of the vertices of the longest edge?
-    # - Do the cummulative sum of the distances along the path and select one
-    #   of the vertices of the edge in the middle. ANSWER: It doesn't make
-    #   sense. The cummulative distance along the path is not the same as the
-    #   distance from the path's first and last vertices (triangular
-    #   inequality).
-
-    # Choose the middle vertex.
+    # Compute the midpoints. Choose the middle vertex.
     mid_point_ids <- vapply(paths,
                             FUN = function(path) {
                                 x <- as.vector(unlist(path))
@@ -303,99 +334,31 @@ al_s2 <- function(samples_tb,
 
 
 
-.al_s2_label_completion <- function(G, L){
-    # TODO: implement!
-    TRUE
-}
-
-
-
-#' @title Remove mismatching edged from a matrix graph.
+#' @title Build a matrix representing a graph made of the closest verteces.
 #'
-#' @name .al_s2_remove_mismatch_edges
-#'
-#' @keywords internal
-#'
-#' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
-#'
-#' @description This function takes a matrix representing a graph and removes
-#' the edges with different labels at their extremes.
-#'
-#' @param G_mt       A matrix representing a graph (see .al_s2_build_graph_mt).
-#' @param dataset_tb A sits tibble.
-#' @return           A matrix representation of a graph with potentially less
-#'                   edges than G.
-#'
-.al_s2_remove_mismatch_edges <- function(G_mt, dataset_tb){
-
-    dataset_tb["sample_id"] <- seq_len(nrow(dataset_tb))
-
-    # Remove from G all edges which two ends have different labels
-    mismatch_ls <- lapply(1:nrow(G_mt),
-                          FUN = function(sample_id, G_mt, dataset_tb){
-
-                              this_label <- dataset_tb[["label"]][sample_id]
-
-                              if (is.na(this_label) || this_label == "")
-                                  return(integer())
-
-                              this_row <- G_mt[sample_id, ]
-
-                              closest_ids <- which(!is.na(this_row))
-
-                              closest_labels <-
-                                  dataset_tb[["label"]][closest_ids]
-
-                              mismatch_ids <-
-                                  closest_ids[this_label != closest_labels]
-
-                              return(mismatch_ids)
-                          },
-                          G_mt = G_mt,
-                          dataset_tb = dataset_tb)
-
-    stopifnot(length(mismatch_ls) == nrow(dataset_tb))
-
-    for (i in seq_along(mismatch_ls)) {
-
-        mismatch_vec <- mismatch_ls[[i]]
-
-        if (length(mismatch_vec) == 0)
-            next()
-
-        G_mt[i, mismatch_vec] <- NA
-    }
-
-    return(G_mt)
-}
-
-
-
-#' @title Build a matrix representing a graph
-#'
-#' @name .al_s2_build_graph_mt
+#' @name .al_s2_bild_closest_vertex_graph
 #'
 #' @keywords internal
 #'
 #' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
 #'
 #' @description This function takes a sits tibble and returns a matrix
-#' representation of a similarity graph.
+#' representation of a similarity graph where only the most similar samples
+#' are connected.
 #'
 #' @param samples_tb      A sits tibble with both labelled and unlabelled
 #'                        samples (i.e. NA).
 #' @param sim_method      A character. A method for computing the similarity
 #'                        among samples. See proxy::simil for details.
-#' @param keep_n          An integer. The number of most similar samples to
-#'                        keep while building the graph.
+#' @param closest_n       An integer. The number of most similar samples to
+#'                        link in the graph.
 #' @return                A lower triangular matrix. The matrix's upper
 #'                        triangular part along its principal diagonal are set
 #'                        to NA. The rows in the matrix's lower triangular part
-#'                        are non-NA for the keep_n elements.
+#'                        are non-NA for the closest_n elements.
 #'
-.al_s2_build_graph_mt <- function(samples_tb,
-                                  sim_method = "Euclidean",
-                                  keep_n = 10){
+.al_s2_bild_closest_vertex_graph <- function(samples_tb, sim_method,
+                                             closest_n) {
 
     time_series <- as.matrix(sits:::.sits_distances(samples_tb)[,-2:0])
     dist_mt <- as.matrix(proxy::dist(time_series,
@@ -407,9 +370,12 @@ al_s2 <- function(samples_tb,
                        FUN = function(x, n_closest){
                            top <- head(sort(x),
                                        n_closest)
-                           x[which(!(x %in% top))] <- NA
+                           x[which(!(x %in% top))] <- 0
                            return(x)
                        },
-                   n_closest = keep_n))
-   return(dist_mt)
+                   n_closest = closest_n))
+    dist_mt[is.na(dist_mt)] <- 0
+    dist_mt <- dist_mt + t(dist_mt)
+
+    return(dist_mt)
 }
