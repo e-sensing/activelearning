@@ -4,13 +4,14 @@
 #'
 #' @author Alber Sanchez, \email{alber.ipia@@inpe.br}
 #'
-#' @description Semi-Supervised Learning is a set of classification methods that
-#' use both labelled and unlabelled samples. The Shortest Shortest Path (S2)
-#' algorithm uses a undirected graph of the samples and iteratively removes
-#' edges, trying to identify the boundaries of each class in the graph.
+#' @description Semi-Supervised Learning is a set of classification methods
+#' that use both labelled and unlabelled samples. The Shortest Shortest Path
+#' (S2) algorithm uses a undirected graph of the samples and iteratively
+#' removes edges, trying to identify the boundaries of each class in the graph.
 #'
 #' This function receives a sits tibble with time series samples and it returns
-#' the label of each sample
+#' a sits tibble with either the unlabelled samples to be sent to the oracle
+#' or the label of each sample.
 #'
 #' @references Dasarathy, G., Nowak, R., & Zhu, X. (2015). S2: An efficient
 #' graph based active learning algorithm with application to nonparametric
@@ -21,16 +22,19 @@
 #' @param sim_method      A character. A method for computing the similarity
 #'                        among samples. See proxy::simil for details.
 #' @param closest_n       An integer. The number of most similar samples to
-#'                        keep while building the graph.
+#'                        keep while building a similarity graph of the
+#'                        samples.
 #' @param mode            A character telling if the functin runs on either the
 #'                        "active_learning" or "semi_supervised_learning" mode.
-#' @return                A sits tibble with updated labels.
+#' @return                A sits tibble with either the samples to be sent to
+#'                        the oracle (mode "semi_supervised_learning", column
+#                         s2 == 1) or the label column updated.
 #'
 #' @export
 #'
 al_s2 <- function(samples_tb,
-                  sim_method,
-                  closest_n,
+                  sim_method = "correlation",
+                  closest_n = 6,
                   mode = "active_learning") {
 
     sits:::.sits_tibble_test(samples_tb)
@@ -86,13 +90,15 @@ al_s2 <- function(samples_tb,
 #'                        keep while building the graph.
 #' @param mode            A character telling if the functin runs on either the
 #'                        "active_learning" or "semi_supervised_learning" mode.
-#' @return                A sits tibble with updated labels.
+#' @return                A sits tibble with either the samples to be sent to
+#'                        the oracle (mode "semi_supervised_learning", column
+#                         s2 == 1) or the label column updated.
 #'
 .al_s2 <- function(s_labelled_tb,
                    s_unlabelled_tb,
                    sim_method,
                    closest_n,
-                   mode = "active_learning") {
+                   mode) {
 
     stopifnot(mode %in% c("active_learning",
                           "semi_supervised_learning"))
