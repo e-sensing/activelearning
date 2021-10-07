@@ -1,5 +1,5 @@
 ---
-title: "egal"
+title: "Exploration Guided Active Learning"
 output: rmarkdown::html_vignette
 bibliography: references.bib  
 vignette: >
@@ -145,6 +145,8 @@ classification_interval <- samples_tb %>%
 modis_cube <- sits::sits_cube(
     source = "LOCAL",
     name = "sinop-2014",
+    origin = "BDC",
+    collection = "MOD13Q1-6",
     satellite = "TERRA",
     sensor = "MODIS",
     data_dir = system.file("extdata/raster/mod13q1", 
@@ -184,12 +186,6 @@ plot(label_cube,
      title = "Ground truth")
 
 ```
-
-
-
-## Random classification 
-
-TODO: Add a classification using only randomly selected points.
 
 
 
