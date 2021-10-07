@@ -101,7 +101,7 @@ test_that("Test expected usage: dtw", {
     # proxy::pr_DB.
     if (proxy::pr_DB$entry_exists("DTW") == FALSE)
         skip(paste("DTW distance not found in proxy::pr_DB. Is the dtw",
-                   "package installed?")
+                   "package installed?"))
 
     samples_tb <- sits::sits_select(sits::samples_modis_4bands,
                                     bands = "EVI") %>%
