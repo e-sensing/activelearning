@@ -27,6 +27,9 @@
 #'                    confident predictions. Ratio of Confidence is the ratio
 #'                    between the top two most confident predictions.
 #' @export
+#'
+#' @importFrom rlang .data
+#'
 al_random_sampling <- function(samples_tb,
                                sits_method,
                                multicores = 1){
@@ -39,11 +42,13 @@ al_random_sampling <- function(samples_tb,
     .al_check_time_series(samples_tb)
 
     label_tb <- samples_tb %>%
-        dplyr::filter(nchar(label) > 0,
-                      label != "NoClass")
+        dplyr::filter(nchar(.data$label) > 0,
+                      .data$label != "NoClass")
 
     no_label_tb <- samples_tb %>%
-        dplyr::filter(is.na(label) | label == "" | label == "NoClass")
+        dplyr::filter(is.na(.data$label) |
+                      .data$label == "" |
+                      .data$label == "NoClass")
 
     assertthat::assert_that(
         nrow(label_tb) > 0,
@@ -99,6 +104,8 @@ al_random_sampling <- function(samples_tb,
 #'                    confident predictions. Ratio of Confidence is the ratio
 #'                    between the top two most confident predictions.
 #'
+#' @importFrom rlang .data
+#'
 .al_rs <- function(s_labelled_tb,
                    s_unlabelled_tb,
                    sits_method,
@@ -116,7 +123,7 @@ al_random_sampling <- function(samples_tb,
                       points_tb = points_tb)
 
     points_tb <- dplyr::bind_cols(points_tb, do.call(rbind, metrics))
-    points_tb <- dplyr::arrange(points_tb, dplyr::desc(entropy))
+    points_tb <- dplyr::arrange(points_tb, dplyr::desc(.data$entropy))
     points_tb[["predicted"]] <- NULL
 
     return(points_tb)

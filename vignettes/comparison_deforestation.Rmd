@@ -28,14 +28,14 @@ sits_method <- sits::sits_xgboost(verbose = FALSE)
 samples_tb <- system.file("extdata/samples.rds",
                           package = "activelearning") %>%
   readRDS() %>%
-  dplyr::mutate(sample_id = 1:nrow(.))
+  dplyr::mutate(sample_id = seq_len(nrow(.)))
 
 # Get the labels used in the samples.
 reference_labels <- samples_tb %>% 
   dplyr::pull(label) %>% 
   unique() %>%
   sort() %>% 
-  magrittr::set_names(1:length(.))
+  magrittr::set_names(seq_len(length(.)))
  
 # Initial number of labels to be taken from each label.
 n_labelled   <- 3
@@ -148,22 +148,22 @@ experiment <- function(x, labelled_samples, n_samples){
   for (i in 1:n_iterations) {
     
     new_samples <- samples_tb %>% 
-      dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
-      dplyr::sample_n(size = n_samples)
+        dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+        dplyr::sample_n(size = n_samples)
     
-    training_samples <- training_samples %>%
-      dplyr::bind_rows(new_samples) %>%
-      magrittr::set_class(class(sits::cerrado_2classes))
+    training_samples <- training_samples %>% 
+        dplyr::bind_rows(new_samples) %>% 
+        magrittr::set_class(class(sits::cerrado_2classes))
      
     acc_iter <- run_iteration(training_samples, 
                               samples_tb,
                               sits_method,
                               reference_labels) %>% 
-      dplyr::mutate(type = "Without AL",
-                    iteration = i)
+        dplyr::mutate(type = "Without AL", 
+                      iteration = i)
     
-    accuracy_tb <- accuracy_tb %>%
-      dplyr::bind_rows(acc_iter)
+    accuracy_tb <- accuracy_tb %>% 
+        dplyr::bind_rows(acc_iter)
   } 
  
    
@@ -176,84 +176,87 @@ experiment <- function(x, labelled_samples, n_samples){
   for (i in 1:n_iterations) {
     
     unlabelled_tb <- samples_tb %>% 
-      dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
-      dplyr::mutate(label = NA)
+        dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+        dplyr::mutate(label = NA)
   
-    # use AL random sampling to choose the samples to be sent to the oracle. 
-    oracle_samples <- training_samples %>%
-      dplyr::bind_rows(unlabelled_tb) %>% 
-      al_random_sampling(sits_method = sits_method,
-                         multicores = 1) %>% 
-      dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
-      dplyr::arrange(dplyr::desc(entropy)) %>%
-      dplyr::slice_head(n = n_samples) %>% 
-      dplyr::select(-entropy, -least_conf, -margin_conf, 
-                    -ratio_conf, -new_label)
+    # Use AL random sampling to choose the samples to be sent to the oracle. 
+    oracle_samples <- training_samples %>% 
+        dplyr::bind_rows(unlabelled_tb) %>% 
+        al_random_sampling(sits_method = sits_method, multicores = 1) %>% 
+        dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
+        dplyr::arrange(dplyr::desc(entropy)) %>% 
+        dplyr::slice_head(n = n_samples) %>% 
+        dplyr::select(-entropy, -least_conf, -margin_conf, 
+                      -ratio_conf, -new_label)
     
     # Get the true labels from the oracle
-    oracle_samples <- oracle_samples %>%
-      dplyr::left_join(
-        y = samples_tb %>% 
-          dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
-          select(true_label = label, 
-                 sample_id),
-        by = "sample_id") %>% 
+    oracle_samples <- oracle_samples %>% 
+        dplyr::left_join(
+            y = samples_tb %>% 
+               dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+               select(true_label = label, 
+                      sample_id), 
+            by = "sample_id"
+        ) %>% 
       dplyr::mutate(label = true_label) %>% 
       dplyr::select(-true_label)
                     
     # Add the oracle samples to the training set.
-    training_samples <- training_samples %>%
-      dplyr::bind_rows(oracle_samples) %>%
-      magrittr::set_class(class(sits::cerrado_2classes))
+    training_samples <- training_samples %>% 
+        dplyr::bind_rows(oracle_samples) %>% 
+        magrittr::set_class(class(sits::cerrado_2classes))
     
     # Do the classification and estimate the accuracy.
     acc_iter <- run_iteration(training_samples, 
                               samples_tb,
                               sits_method,
                               reference_labels) %>% 
-      dplyr::mutate(type = "AL Random Sampling",
-                    iteration = i)
+        dplyr::mutate(type = "AL Random Sampling", 
+                      iteration = i)
     
-    accuracy_tb <- accuracy_tb %>%
-      dplyr::bind_rows(acc_iter)
+    accuracy_tb <- accuracy_tb %>% 
+        dplyr::bind_rows(acc_iter)
   }
  
    
   
   #---- Test using EGAL ----
   
-  training_samples <- labelled_samples
+  training_samples <- labelled_samples %>%
+      magrittr::set_class(sits::cerrado_2classes))
   
   for (i in 1:n_iterations) {
 
     unlabelled_tb <- samples_tb %>% 
-      dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
-      dplyr::mutate(label = NA)
+        dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+        dplyr::mutate(label = NA)
   
     # Use AL EGAL to choose the samples to be sent to the oracle. 
-    oracle_samples <- training_samples %>%
-      dplyr::bind_rows(unlabelled_tb) %>% 
-      al_egal() %>% 
-      dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
-      dplyr::arrange(dplyr::desc(egal)) %>%
-      dplyr::slice_head(n = n_samples) %>% 
-      dplyr::select(-egal)
-    
+    oracle_samples <- training_samples %>% 
+        dplyr::bind_rows(unlabelled_tb) %>% 
+        al_egal() %>% 
+        dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
+        dplyr::arrange(dplyr::desc(egal)) %>% 
+        dplyr::slice_head(n = n_samples) %>% 
+        dplyr::select(-egal)
+   
+
     # Get the true labels from the oracle
     oracle_samples <- oracle_samples %>%
-      dplyr::left_join(
-        y = samples_tb %>% 
-          dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
-          select(true_label = label, 
-                 sample_id),
-        by = "sample_id") %>% 
+        dplyr::left_join(
+            y = samples_tb %>% 
+              dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>%
+              select(true_label = label, 
+                     sample_id),
+            by = "sample_id"
+        ) %>% 
       dplyr::mutate(label = true_label) %>% 
       dplyr::select(-true_label)
                     
     # Add the oracle samples to the training set.
-    training_samples <- training_samples %>%
-      dplyr::bind_rows(oracle_samples) %>%
-      magrittr::set_class(class(sits::cerrado_2classes))
+    training_samples <- training_samples %>% 
+        dplyr::bind_rows(oracle_samples) %>% 
+        magrittr::set_class(class(sits::cerrado_2classes))
     
     # Do the classification and estimate the accuracy.
     acc_iter <- run_iteration(training_samples, 
@@ -266,7 +269,38 @@ experiment <- function(x, labelled_samples, n_samples){
     accuracy_tb <- accuracy_tb %>%
       dplyr::bind_rows(acc_iter)
   }
- 
+
+
+
+  #---- Test using S2 ----
+
+    training_samples <- labelled_samples %>%
+        magrittr::set_class(sits::cerrado_2classes)
+
+    for (i in 1:n_iterations) {
+
+        unlabelled_tb <- samples_tb %>% 
+          dplyr::filter(!(sample_id %in% training_samples$sample_id)) %>% 
+          dplyr::mutate(label = NA)
+
+      # NOTE: S2 returns don't find samples for the oracle!
+      #       Do all the midpoins already have labels?
+        # Use AL S2 to choose the samples to be sent to the oracle. 
+        #oracle_samples <- training_samples %>%
+        #  dplyr::bind_rows(unlabelled_tb) %>% 
+        #  al_s2(sim_method = "correlation",
+        #        closest_n = 10,
+        #        mode = "active_learning") %>% 
+        #  dplyr::filter(sample_id %in% unlabelled_tb$sample_id) %>% 
+        #  dplyr::arrange(dplyr::desc(s2)) %>%
+        #  dplyr::filter(s2 == 1) %>% 
+        #  dplyr::select(-s2)
+
+
+    }
+
+
+
   accuracy_tb %>% 
     dplyr::mutate(experiment = x) %>% 
     return()

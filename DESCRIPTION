@@ -13,16 +13,24 @@ License: GPL (>= 3) | file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.1
+RoxygenNote: 7.1.2
 Imports:
     assertthat,
-    dplyr,
+    igraph,
     proxy,
+    rlang,
     sf,
     sits
 Suggests: 
-    rmarkdown,
+    caret,
+    dplyr,
+    dtw,
+    dtwclust,
     knitr,
-    testthat (>= 3.0.0)
+    magrittr,
+    rgdal,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    xgboost
 Config/testthat/edition: 3
 VignetteBuilder: knitr

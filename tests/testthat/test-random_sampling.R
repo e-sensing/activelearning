@@ -15,6 +15,12 @@ test_that("Test input samples", {
 
 test_that("Test expected usage", {
 
+    if (!("xgboost" %in% rownames(installed.packages())))
+        skip(paste("Is the xgboost package installed?"))
+    suppressPackageStartupMessages(require(xgboost))
+
+    xgb_method <- sits::sits_xgboost(verbose = FALSE)
+
     samples_tb <- sits::samples_modis_4bands %>%
         sits::sits_select(bands = c("NDVI", "EVI")) %>%
         dplyr::mutate(sample_id = 1:nrow(.))
@@ -23,7 +29,6 @@ test_that("Test expected usage", {
         sits::sits_timeline() %>%
         range()
 
-    xgb_method <- sits::sits_xgboost(verbose = FALSE)
 
     labelled_tb <- samples_tb %>%
         dplyr::group_by(label) %>%

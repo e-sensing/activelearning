@@ -99,8 +99,12 @@ test_that("Test expected usage: dtw", {
 
     # NOTE: Only runs if the package dtw is available and registered in
     # proxy::pr_DB.
+    if (!("dtw" %in% rownames(installed.packages())))
+        skip(paste("Is the dtw package installed?"))
+    suppressPackageStartupMessages(require(dtw))
     if (proxy::pr_DB$entry_exists("DTW") == FALSE)
-        skip("DTW distance not found in proxy::pr_DB")
+        skip(paste("DTW distance not found in proxy::pr_DB. Is the dtw",
+                   "distance registered?"))
 
     samples_tb <- sits::sits_select(sits::samples_modis_4bands,
                                     bands = "EVI") %>%
@@ -140,8 +144,12 @@ test_that("Test expected usage: dtw basic", {
 
     # NOTE: Only runs if the package dtwclust is available and registered in
     # proxy::pr_DB.
+    if (!("dtwclust" %in% rownames(installed.packages())))
+        skip(paste("Is the dtwclust package installed?"))
+    suppressPackageStartupMessages(require(dtwclust))
     if (proxy::pr_DB$entry_exists("DTW_BASIC") == FALSE)
-        skip("DTW BASIC distance not found in proxy::pr_DB")
+        skip(paste("DTW BASIC distance not found in proxy::pr_DB.",
+                   "Is the dtwclust package installed?"))
 
     samples_tb <- sits::sits_select(sits::samples_modis_4bands,
                                     bands = "EVI") %>%

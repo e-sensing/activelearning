@@ -3,3 +3,5 @@
 export(al_egal)
 export(al_get_random_points)
 export(al_random_sampling)
+export(al_s2)
+importFrom(rlang,.data)
