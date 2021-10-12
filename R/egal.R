@@ -22,7 +22,6 @@
 #'
 #' @param samples_tb      A sits tibble with both labelled and unlabelled
 #'                        samples (i.e. NA).
-#' @param data_cube       A sits data cube.
 #' @param sim_method      A character. A method for computing the similarity
 #'                        among samples. See proxy::simil for details.
 #' @param alpha           A double. It controls the radius of the neighborhood
@@ -43,6 +42,8 @@
 #'                        first for labeling.
 #' @export
 #'
+#' @importFrom rlang .data
+#'
 al_egal <- function(samples_tb,
                     sim_method = "correlation",
                     alpha = NULL,
@@ -54,11 +55,13 @@ al_egal <- function(samples_tb,
     .al_check_time_series(samples_tb)
 
     label_tb <- samples_tb %>%
-        dplyr::filter(nchar(label) > 0,
-                      label != "NoClass")
+        dplyr::filter(nchar(.data$label) > 0,
+                      .data$label != "NoClass")
 
     no_label_tb <- samples_tb %>%
-        dplyr::filter(is.na(label) | label == "" | label == "NoClass")
+        dplyr::filter(is.na(.data$label) |
+                      .data$label == ""  |
+                      .data$label == "NoClass")
 
     assertthat::assert_that(
         nrow(label_tb) > 0,

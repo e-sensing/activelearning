@@ -30,6 +30,8 @@
 #'                        the oracle (mode "semi_supervised_learning", column
 #                         s2 == 1) or the label column updated.
 #'
+#' @importFrom rlang .data
+#'
 #' @export
 #'
 al_s2 <- function(samples_tb,
@@ -40,12 +42,14 @@ al_s2 <- function(samples_tb,
     sits:::.sits_tibble_test(samples_tb)
 
     label_tb <- samples_tb %>%
-        dplyr::filter(is.na(label) == FALSE,
-                      nchar(label) > 0,
-                      label != "NoClass")
+        dplyr::filter(is.na(.data$label) == FALSE,
+                      nchar(.data$label) > 0,
+                      .data$label != "NoClass")
 
     no_label_tb <- samples_tb %>%
-        dplyr::filter(is.na(label) | label == "" | label == "NoClass")
+        dplyr::filter(is.na(.data$label) |
+                      .data$label == ""  |
+                      .data$label == "NoClass")
 
     assertthat::assert_that(
         nrow(label_tb) > 0,
@@ -330,7 +334,7 @@ al_s2 <- function(samples_tb,
     mid_point_ids <- vapply(paths,
                             FUN = function(path) {
                                 x <- as.vector(unlist(path))
-                                return(x[median(1:length(x))])
+                                return(x[stats::median(1:length(x))])
                             },
                             FUN.VALUE = integer(1))
 
@@ -374,8 +378,8 @@ al_s2 <- function(samples_tb,
     dist_mt <- t(apply(dist_mt,
                        MARGIN = 1,
                        FUN = function(x, n_closest){
-                           top <- head(sort(x),
-                                       n_closest)
+                           top <- utils::head(sort(x),
+                                              n_closest)
                            x[which(!(x %in% top))] <- 0
                            return(x)
                        },
