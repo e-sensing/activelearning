@@ -18,12 +18,19 @@ Imports:
     assertthat,
     igraph,
     proxy,
+    rlang,
+    sf,
     sits
 Suggests: 
     caret,
+    dplyr,
+    dtw,
+    dtwclust,
     knitr,
+    magrittr,
     rgdal,
     rmarkdown,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    xgboost
 Config/testthat/edition: 3
 VignetteBuilder: knitr
