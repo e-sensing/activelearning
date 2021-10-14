@@ -150,7 +150,10 @@ al_egal <- function(samples_tb,
     #     labelled neighbor.
 
     # Check if the provided method is supported.
-    stopifnot(proxy::pr_DB$entry_exists(sim_method))
+    if (!(proxy::pr_DB$entry_exists(sim_method)))
+        stop(paste0("Distance/Similarity not found in proxy::pr_DB. Did you ",
+                    "install or load the required package (e.g. dtw or ",
+                    "dtwclust)?"))
 
     # Merge the samples and format them.
     dataset_tb <- dplyr::bind_rows(s_labelled_tb,
